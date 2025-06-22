@@ -1,0 +1,412 @@
+@startuml 传输层实现代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 传输层实现 (Transport Layer) 代码实现位置
+
+' 定义颜色主题
+!define TRANSPORT_COLOR #E8F5E8
+!define HTTP2_COLOR #FFF3E0
+!define STREAM_COLOR #F3E5F5
+!define FRAME_COLOR #E3F2FD
+
+package "传输层核心接口 (Core Interfaces)" TRANSPORT_COLOR {
+    RECTANGLE ClientTransport {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 50-150 行
+        --
+        **接口定义**:
+        - type ClientTransport interface (行 ~50)
+        - NewStream(context.Context, *CallHdr) (*ClientStream, error)
+        - Close(error)
+        - GracefulClose()
+        - Error() <-chan struct{}
+        - GoAway() <-chan struct{}
+        - RemoteAddr() net.Addr
+        --
+        note: 文件: internal/transport/transport.go\n客户端传输接口
+    }
+    
+    RECTANGLE ServerTransport {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 200-300 行
+        --
+        **接口定义**:
+        - type ServerTransport interface (行 ~200)
+        - HandleStreams(context.Context, func(*ServerStream))
+        - Close(error)
+        - Peer() *peer.Peer
+        - Drain(string)
+        --
+        note: 服务端传输接口
+    }
+    
+    RECTANGLE CallHdr {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 350-400 行
+        --
+        **结构体定义**:
+        - type CallHdr struct (行 ~350)
+        - Host string
+        - Method string
+        - SendCompress string
+        - Creds credentials.PerRPCCredentials
+        - ContentSubtype string
+        --
+        note: RPC 调用头信息结构
+    }
+    
+    RECTANGLE ConnectOptions {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 450-550 行
+        --
+        **结构体定义**:
+        - type ConnectOptions struct (行 ~450)
+        - Dialer func(context.Context, string) (net.Conn, error)
+        - UserAgent string
+        - Authority string
+        - Creds credentials.TransportCredentials
+        - KeepaliveParams keepalive.ClientParameters
+        --
+        note: 连接选项结构
+    }
+}
+
+package "HTTP/2 客户端传输 (HTTP/2 Client)" HTTP2_COLOR {
+    RECTANGLE http2Client {
+        **文件位置**: internal/transport/http2_client.go
+        **行数范围**: 约 100-1500 行
+        --
+        **结构体定义**:
+        - type http2Client struct (行 ~100)
+        - lastRead int64
+        - ctx context.Context
+        - conn net.Conn
+        - loopy *loopyWriter
+        - remoteAddr net.Addr
+        - authInfo credentials.AuthInfo
+        - framer *framer
+        - controlBuf *controlBuffer
+        - activeStreams map[uint32]*Stream
+        --
+        **主要方法**:
+        - newHTTP2Client() (行 ~200)
+        - NewStream() (行 ~400)
+        - CloseStream() (行 ~600)
+        - Write() (行 ~800)
+        - operateHeaders() (行 ~1000)
+        - handleData() (行 ~1200)
+        --
+        note: 文件: internal/transport/http2_client.go\nHTTP/2 客户端传输实现
+    }
+    
+    RECTANGLE loopyWriter {
+        **文件位置**: internal/transport/controlbuf.go
+        **行数范围**: 约 500-800 行
+        --
+        **结构体定义**:
+        - type loopyWriter struct (行 ~500)
+        - run func() error
+        - cbuf *controlBuffer
+        - side side
+        --
+        **主要方法**:
+        - run() (行 ~600)
+        - writeHeader() (行 ~650)
+        - writeData() (行 ~700)
+        - writePing() (行 ~750)
+        --
+        note: 文件: internal/transport/controlbuf.go\n循环写入器实现
+    }
+}
+
+package "HTTP/2 服务端传输 (HTTP/2 Server)" HTTP2_COLOR {
+    RECTANGLE http2Server {
+        **文件位置**: internal/transport/http2_server.go
+        **行数范围**: 约 100-1800 行
+        --
+        **结构体定义**:
+        - type http2Server struct (行 ~100)
+        - ctx context.Context
+        - conn net.Conn
+        - loopy *loopyWriter
+        - remoteAddr net.Addr
+        - authInfo credentials.AuthInfo
+        - framer *framer
+        - fc *inFlow
+        - activeStreams map[uint32]*Stream
+        - maxStreams uint32
+        --
+        **主要方法**:
+        - newHTTP2Server() (行 ~200)
+        - HandleStreams() (行 ~400)
+        - operateHeaders() (行 ~600)
+        - handleData() (行 ~800)
+        - writeHeader() (行 ~1000)
+        - write() (行 ~1200)
+        - writeStatus() (行 ~1400)
+        --
+        note: 文件: internal/transport/http2_server.go\nHTTP/2 服务端传输实现
+    }
+}
+
+package "流管理 (Stream Management)" STREAM_COLOR {
+    RECTANGLE Stream {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 600-800 行
+        --
+        **结构体定义**:
+        - type Stream struct (行 ~600)
+        - id uint32
+        - st ServerTransport
+        - ctx context.Context
+        - method string
+        - recvCompress string
+        - sendCompress string
+        - buf *recvBuffer
+        - fc *inFlow
+        --
+        **主要方法**:
+        - Read() (行 ~700)
+        - Write() (行 ~750)
+        --
+        note: 文件: internal/transport/transport.go\nRPC 流抽象结构
+    }
+    
+    RECTANGLE ClientStream {
+        **文件位置**: stream.go
+        **行数范围**: 约 100-300 行
+        --
+        **结构体定义**:
+        - type clientStream struct (行 ~100)
+        - *Stream
+        - ct ClientTransport
+        - status *status.Status
+        --
+        **主要方法**:
+        - Read() (行 ~200)
+        - Write() (行 ~250)
+        - Close() (行 ~280)
+        --
+        note: 文件: stream.go\n客户端流实现
+    }
+    
+    RECTANGLE ServerStream {
+        **文件位置**: stream.go
+        **行数范围**: 约 400-700 行
+        --
+        **结构体定义**:
+        - type serverStream struct (行 ~400)
+        - *Stream
+        - t ServerTransport
+        - s *transport.Stream
+        - codec encoding.Codec
+        --
+        **主要方法**:
+        - SetHeader() (行 ~500)
+        - SendHeader() (行 ~550)
+        - SendMsg() (行 ~600)
+        - RecvMsg() (行 ~650)
+        --
+        note: 文件: stream.go\n服务端流实现
+    }
+}
+
+package "帧处理 (Frame Processing)" FRAME_COLOR {
+    RECTANGLE framer {
+        **文件位置**: internal/transport/http_util.go
+        **行数范围**: 约 100-400 行
+        --
+        **结构体定义**:
+        - type framer struct (行 ~100)
+        - writer *bufio.Writer
+        - fr *http2.Framer
+        --
+        **主要方法**:
+        - writeData() (行 ~200)
+        - writeHeaders() (行 ~250)
+        - writeRSTStream() (行 ~300)
+        - writeSettings() (行 ~350)
+        - readFrame() (行 ~380)
+        --
+        note: 文件: internal/transport/http_util.go\nHTTP/2 帧处理器
+    }
+    
+    RECTANGLE controlBuffer {
+        **文件位置**: internal/transport/controlbuf.go
+        **行数范围**: 约 100-400 行
+        --
+        **结构体定义**:
+        - type controlBuffer struct (行 ~100)
+        - ch chan struct{}
+        - done <-chan struct{}
+        - mu sync.Mutex
+        - consumerWaiting bool
+        - list *itemList
+        --
+        **主要方法**:
+        - put() (行 ~200)
+        - load() (行 ~250)
+        - get() (行 ~300)
+        - finish() (行 ~350)
+        --
+        note: 文件: internal/transport/controlbuf.go\n控制缓冲区实现
+    }
+}
+
+package "流控制 (Flow Control)" {
+    RECTANGLE inFlow {
+        **文件位置**: internal/transport/flowcontrol.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type inFlow struct (行 ~50)
+        - mu sync.Mutex
+        - limit uint32
+        - unacked uint32
+        - readBytes uint32
+        --
+        **主要方法**:
+        - newLimit() (行 ~100)
+        - maybeAdjust() (行 ~150)
+        - onData() (行 ~180)
+        --
+        note: 文件: internal/transport/flowcontrol.go\n入站流控制实现
+    }
+    
+    RECTANGLE outFlow {
+        **文件位置**: internal/transport/flowcontrol.go
+        **行数范围**: 约 250-400 行
+        --
+        **结构体定义**:
+        - type outFlow struct (行 ~250)
+        - mu sync.Mutex
+        - limit int64
+        - conn *outFlow
+        --
+        **主要方法**:
+        - add() (行 ~300)
+        - reset() (行 ~350)
+        - available() (行 ~380)
+        --
+        note: 出站流控制实现
+    }
+    
+    RECTANGLE quotaPool {
+        **文件位置**: internal/transport/flowcontrol.go
+        **行数范围**: 约 450-550 行
+        --
+        **结构体定义**:
+        - type quotaPool struct (行 ~450)
+        - c chan struct{}
+        --
+        **主要方法**:
+        - add() (行 ~500)
+        - cancel() (行 ~520)
+        - acquire() (行 ~540)
+        --
+        note: 配额池实现
+    }
+}
+
+package "传输创建函数 (Transport Creation)" {
+    RECTANGLE NewClientTransport {
+        **文件位置**: internal/transport/http2_client.go
+        **行数范围**: 约 50-150 行
+        --
+        **函数实现**:
+        - func NewClientTransport(ctx, target, opts) (行 ~50)
+        - 创建 HTTP/2 客户端连接
+        - 执行 TLS 握手
+        - 发送连接前言
+        - 启动读写协程
+        --
+        note: 客户端传输创建函数
+    }
+    
+    RECTANGLE NewServerTransport {
+        **文件位置**: internal/transport/http2_server.go
+        **行数范围**: 约 50-150 行
+        --
+        **函数实现**:
+        - func NewServerTransport(protocol, conn, config) (行 ~50)
+        - 创建 HTTP/2 服务端连接
+        - 处理连接前言
+        - 配置流控制参数
+        - 启动帧处理循环
+        --
+        note: 服务端传输创建函数
+    }
+}
+
+' 定义关系和文件依赖
+http2Client --> ClientTransport : 实现 (跨文件)
+http2Server --> ServerTransport : 实现 (跨文件)
+
+http2Client --> loopyWriter : 使用 (跨文件)
+http2Server --> loopyWriter : 使用 (跨文件)
+
+http2Client --> framer : 使用 (跨文件)
+http2Server --> framer : 使用 (跨文件)
+
+http2Client --> controlBuffer : 使用 (跨文件)
+http2Server --> controlBuffer : 使用 (跨文件)
+
+Stream --> inFlow : 使用 (跨文件)
+Stream --> outFlow : 使用 (跨文件)
+Stream --> quotaPool : 使用 (跨文件)
+
+ClientStream --> Stream : 继承 (跨文件)
+ServerStream --> Stream : 继承 (跨文件)
+
+' 文件结构注释
+note top of ClientTransport
+  **transport 包结构**:
+  internal/transport/
+  ├── transport.go (接口定义)
+  ├── http2_client.go (HTTP/2 客户端)
+  ├── http2_server.go (HTTP/2 服务端)
+  ├── controlbuf.go (控制缓冲区)
+  ├── flowcontrol.go (流控制)
+  └── http_util.go (HTTP/2 工具)
+end note
+
+note bottom of http2Client
+  **HTTP/2 客户端特性**:
+  - 支持多路复用
+  - 自动流控制
+  - 连接保活
+  - 优雅关闭
+  - 错误恢复
+  - 性能优化
+end note
+
+note right of Stream
+  **流相关文件**:
+  ├── stream.go (流接口和实现)
+  ├── internal/transport/transport.go (传输流)
+  └── 各种流包装器和工具
+end note
+
+note left of framer
+  **帧处理相关**:
+  - 基于 golang.org/x/net/http2
+  - 封装了 HTTP/2 帧操作
+  - 提供读写缓冲
+  - 支持帧验证
+  - 错误处理
+end note
+
+' 初始化和创建流程注释
+note as N1
+  **传输层初始化流程**:
+  1. NewClientTransport() 创建客户端传输
+  2. 建立 TCP 连接
+  3. TLS 握手 (如果启用)
+  4. 发送 HTTP/2 连接前言
+  5. 交换 SETTINGS 帧
+  6. 启动读写协程
+  7. 开始处理 RPC 流
+end note
+
+@enduml

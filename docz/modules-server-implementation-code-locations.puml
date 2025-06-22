@@ -1,0 +1,321 @@
+@startuml 服务端实现代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 服务端实现 (Server) 代码实现位置
+
+' 定义颜色主题
+!define SERVER_COLOR #E8F5E8
+!define TRANSPORT_COLOR #FFF3E0
+!define SERVICE_COLOR #F3E5F5
+!define INTERCEPTOR_COLOR #E3F2FD
+
+package "服务端核心 (Server Core)" SERVER_COLOR {
+    RECTANGLE Server {
+        **文件位置**: server.go
+        **行数范围**: 约 100-800 行
+        --
+        **结构体定义**:
+        - type Server struct (行 ~100)
+        - opts serverOptions
+        - lis map[net.Listener]bool
+        - conns map[string]map[transport.ServerTransport]bool
+        - services map[string]*serviceInfo
+        --
+        **主要方法**:
+        - NewServer() (行 ~200)
+        - RegisterService() (行 ~300)
+        - Serve() (行 ~400)
+        - Stop() (行 ~600)
+        - GracefulStop() (行 ~650)
+        --
+        note: 文件: server.go\n服务端核心实现
+    }
+    
+    RECTANGLE ServerOptions {
+        **文件位置**: server.go
+        **行数范围**: 约 50-100 行
+        --
+        **配置函数**:
+        - WithCreds() (行 ~900)
+        - WithUnaryInterceptor() (行 ~950)
+        - WithStreamInterceptor() (行 ~1000)
+        - WithMaxMsgSize() (行 ~1050)
+        --
+        note: 文件: server.go\n服务端配置选项
+    }
+    
+    RECTANGLE serverOptions {
+        **文件位置**: server.go
+        **行数范围**: 约 30-80 行
+        --
+        **结构体定义**:
+        - type serverOptions struct (行 ~30)
+        - creds credentials.TransportCredentials
+        - unaryInt UnaryServerInterceptor
+        - streamInt StreamServerInterceptor
+        - maxReceiveMessageSize int
+        --
+        note: 内部配置结构体
+    }
+}
+
+package "服务注册管理 (Service Registry)" SERVICE_COLOR {
+    RECTANGLE serviceInfo {
+        **文件位置**: server.go
+        **行数范围**: 约 1200-1300 行
+        --
+        **结构体定义**:
+        - type serviceInfo struct (行 ~1200)
+        - serviceImpl any
+        - methods map[string]*MethodDesc
+        - streams map[string]*StreamDesc
+        - mdata any
+        --
+        note: 文件: server.go\n服务信息描述结构
+    }
+    
+    RECTANGLE MethodDesc {
+        **文件位置**: server.go
+        **行数范围**: 约 1350-1400 行
+        --
+        **结构体定义**:
+        - type MethodDesc struct (行 ~1350)
+        - MethodName string
+        - Handler methodHandler
+        --
+        note: 一元方法描述符
+    }
+    
+    RECTANGLE StreamDesc {
+        **文件位置**: server.go
+        **行数范围**: 约 1450-1500 行
+        --
+        **结构体定义**:
+        - type StreamDesc struct (行 ~1450)
+        - StreamName string
+        - Handler StreamHandler
+        - ServerStreams bool
+        - ClientStreams bool
+        --
+        note: 流方法描述符
+    }
+    
+    RECTANGLE ServiceDesc {
+        **文件位置**: 生成的 .pb.go 文件
+        **位置**: 各服务的 protobuf 生成文件
+        --
+        **结构体定义**:
+        - type ServiceDesc struct
+        - ServiceName string
+        - HandlerType any
+        - Methods []MethodDesc
+        - Streams []StreamDesc
+        --
+        note: protoc 生成的服务描述符
+    }
+}
+
+package "传输层管理 (Transport Management)" TRANSPORT_COLOR {
+    RECTANGLE ServerTransport {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 200-300 行
+        --
+        **接口定义**:
+        - type ServerTransport interface (行 ~200)
+        - HandleStreams(context.Context, func(*ServerStream))
+        - Close(error)
+        - Peer() *peer.Peer
+        - Drain(string)
+        --
+        note: 文件: internal/transport/transport.go\n服务端传输接口
+    }
+    
+    RECTANGLE http2Server {
+        **文件位置**: internal/transport/http2_server.go
+        **行数范围**: 约 100-1500 行
+        --
+        **结构体定义**:
+        - type http2Server struct (行 ~100)
+        - conn net.Conn
+        - loopy *loopyWriter
+        - maxStreams uint32
+        - activeStreams map[uint32]*Stream
+        --
+        **主要方法**:
+        - newHTTP2Server() (行 ~200)
+        - HandleStreams() (行 ~400)
+        - operateHeaders() (行 ~600)
+        - handleData() (行 ~800)
+        - writeHeader() (行 ~1000)
+        --
+        note: 文件: internal/transport/http2_server.go\nHTTP/2 服务端传输实现
+    }
+    
+    RECTANGLE ServerStream {
+        **文件位置**: stream.go
+        **行数范围**: 约 1500-1800 行
+        --
+        **结构体定义**:
+        - type serverStream struct (行 ~1500)
+        - ctx context.Context
+        - t transport.ServerTransport
+        - s *transport.Stream
+        - codec encoding.Codec
+        --
+        **主要方法**:
+        - SetHeader() (行 ~1600)
+        - SendHeader() (行 ~1650)
+        - SendMsg() (行 ~1700)
+        - RecvMsg() (行 ~1750)
+        --
+        note: 文件: stream.go\n服务端流实现
+    }
+}
+
+package "拦截器系统 (Interceptor System)" INTERCEPTOR_COLOR {
+    RECTANGLE UnaryServerInterceptor {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 50-100 行
+        --
+        **类型定义**:
+        - type UnaryServerInterceptor func (行 ~50)
+        - (context.Context, any, *UnaryServerInfo, UnaryHandler)
+        - (any, error)
+        --
+        note: 文件: interceptor.go\n一元服务端拦截器类型
+    }
+    
+    RECTANGLE StreamServerInterceptor {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 100-150 行
+        --
+        **类型定义**:
+        - type StreamServerInterceptor func (行 ~100)
+        - (any, ServerStream, *StreamServerInfo, StreamHandler)
+        - error
+        --
+        note: 流服务端拦截器类型
+    }
+    
+    RECTANGLE UnaryServerInfo {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 200-250 行
+        --
+        **结构体定义**:
+        - type UnaryServerInfo struct (行 ~200)
+        - Server any
+        - FullMethod string
+        --
+        note: 一元方法信息结构
+    }
+    
+    RECTANGLE StreamServerInfo {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 300-350 行
+        --
+        **结构体定义**:
+        - type StreamServerInfo struct (行 ~300)
+        - FullMethod string
+        - IsClientStream bool
+        - IsServerStream bool
+        --
+        note: 流方法信息结构
+    }
+}
+
+package "请求处理流程 (Request Processing)" {
+    RECTANGLE processUnaryRPC {
+        **文件位置**: server.go
+        **行数范围**: 约 1600-1800 行
+        --
+        **函数实现**:
+        - func (s *Server) processUnaryRPC (行 ~1600)
+        - 参数解析和验证
+        - 拦截器链执行
+        - 业务方法调用
+        - 响应序列化和发送
+        --
+        note: 文件: server.go\n一元 RPC 处理流程
+    }
+    
+    RECTANGLE processStreamingRPC {
+        **文件位置**: server.go
+        **行数范围**: 约 1900-2100 行
+        --
+        **函数实现**:
+        - func (s *Server) processStreamingRPC (行 ~1900)
+        - 流创建和管理
+        - 拦截器链执行
+        - 流处理器调用
+        --
+        note: 流式 RPC 处理流程
+    }
+    
+    RECTANGLE handleStream {
+        **文件位置**: server.go
+        **行数范围**: 约 2200-2400 行
+        --
+        **函数实现**:
+        - func (s *Server) handleStream (行 ~2200)
+        - 请求路由
+        - 方法查找
+        - 处理器分发
+        --
+        note: 流处理入口函数
+    }
+}
+
+' 定义关系和文件依赖
+Server --> ServerOptions : 配置 (同文件)
+Server --> serviceInfo : 管理 (同文件)
+Server --> ServerTransport : 使用 (跨包)
+
+serviceInfo --> MethodDesc : 包含 (同文件)
+serviceInfo --> StreamDesc : 包含 (同文件)
+ServiceDesc --> serviceInfo : 创建 (跨文件)
+
+http2Server --> ServerTransport : 实现 (同包)
+ServerStream --> ServerTransport : 使用 (跨文件)
+
+Server --> UnaryServerInterceptor : 使用 (跨文件)
+Server --> StreamServerInterceptor : 使用 (跨文件)
+
+' 文件结构注释
+note top of Server
+  **主要文件结构**:
+  server.go (约 2500+ 行)
+  ├── Server 结构体和配置
+  ├── 服务注册相关结构
+  ├── RPC 处理流程函数
+  ├── 拦截器链处理
+  └── 生命周期管理
+end note
+
+note bottom of http2Server
+  **transport 包结构**:
+  internal/transport/
+  ├── transport.go (接口定义)
+  ├── http2_server.go (HTTP/2 服务端)
+  ├── http2_client.go (HTTP/2 客户端)
+  ├── controlbuf.go (控制缓冲区)
+  └── flowcontrol.go (流控制)
+end note
+
+note right of UnaryServerInterceptor
+  **拦截器相关文件**:
+  ├── interceptor.go (类型定义)
+  ├── server.go (拦截器链处理)
+  └── examples/interceptor/ (示例)
+end note
+
+note left of processUnaryRPC
+  **请求处理相关函数**:
+  server.go 中的处理函数:
+  ├── processUnaryRPC() (一元 RPC)
+  ├── processStreamingRPC() (流式 RPC)
+  ├── handleStream() (流处理)
+  └── sendResponse() (响应发送)
+end note
+
+@enduml

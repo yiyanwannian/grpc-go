@@ -1,0 +1,348 @@
+@startuml 元数据处理代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 元数据处理 (Metadata Handling) 代码实现位置
+
+' 定义颜色主题
+!define METADATA_COLOR #E8F5E8
+!define CONTEXT_COLOR #FFF3E0
+!define PROPAGATION_COLOR #F3E5F5
+!define BINARY_COLOR #E3F2FD
+
+package "元数据核心 (Metadata Core)" METADATA_COLOR {
+    RECTANGLE MD {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 50-200 行
+        --
+        **类型定义**:
+        - type MD map[string][]string (行 ~50)
+        --
+        **主要函数**:
+        - func New(m map[string]string) MD (行 ~80)
+        - func Pairs(kv ...string) MD (行 ~120)
+        - func (md MD) Get(k string) []string (行 ~150)
+        - func (md MD) Set(k string, vals ...string) (行 ~170)
+        - func (md MD) Append(k string, vals ...string) (行 ~190)
+        --
+        note: 文件: metadata/metadata.go\n元数据映射核心实现
+    }
+    
+    RECTANGLE metadataKey {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 30-50 行
+        --
+        **类型定义**:
+        - type mdKey struct{} (行 ~30)
+        - type mdIncomingKey struct{} (行 ~40)
+        - type mdOutgoingKey struct{} (行 ~45)
+        --
+        note: 元数据上下文键定义
+    }
+    
+    RECTANGLE rawMD {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 250-300 行
+        --
+        **结构体定义**:
+        - type rawMD struct (行 ~250)
+        - md MD
+        --
+        **主要方法**:
+        - func (r rawMD) Get(k string) []string (行 ~280)
+        --
+        note: 原始元数据包装器
+    }
+}
+
+package "上下文管理 (Context Management)" CONTEXT_COLOR {
+    RECTANGLE OutgoingContext {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 350-450 行
+        --
+        **函数实现**:
+        - func NewOutgoingContext(ctx, md) context.Context (行 ~350)
+        - func AppendToOutgoingContext(ctx, kv) context.Context (行 ~380)
+        - func FromOutgoingContext(ctx) (MD, bool) (行 ~420)
+        --
+        note: 文件: metadata/metadata.go\n出站上下文管理函数
+    }
+    
+    RECTANGLE IncomingContext {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 500-600 行
+        --
+        **函数实现**:
+        - func NewIncomingContext(ctx, md) context.Context (行 ~500)
+        - func FromIncomingContext(ctx) (MD, bool) (行 ~550)
+        --
+        note: 入站上下文管理函数
+    }
+    
+    RECTANGLE ContextUtils {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 650-750 行
+        --
+        **工具函数**:
+        - func Join(mds ...MD) MD (行 ~650)
+        - func Copy(md MD) MD (行 ~680)
+        - func ValueFromIncomingContext(ctx, key) []string (行 ~720)
+        --
+        note: 上下文工具函数
+    }
+}
+
+package "元数据传播 (Metadata Propagation)" PROPAGATION_COLOR {
+    RECTANGLE ClientPropagation {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 800-1000 行
+        --
+        **相关方法**:
+        - func (cc *ClientConn) Invoke() 中的元数据处理 (行 ~800)
+        - func (cc *ClientConn) NewStream() 中的元数据设置 (行 ~900)
+        --
+        note: 文件: clientconn.go\n客户端元数据传播逻辑
+    }
+    
+    RECTANGLE ServerPropagation {
+        **文件位置**: server.go
+        **行数范围**: 约 1200-1400 行
+        --
+        **相关方法**:
+        - func (s *Server) processUnaryRPC() 中的元数据提取 (行 ~1200)
+        - func (s *Server) processStreamingRPC() 中的元数据处理 (行 ~1300)
+        --
+        note: 文件: server.go\n服务端元数据传播逻辑
+    }
+    
+    RECTANGLE TransportMapping {
+        **文件位置**: internal/transport/http2_client.go, http2_server.go
+        **行数范围**: 约 500-700 行
+        --
+        **相关函数**:
+        - func encodeMetadata(md) (行 ~500 in http2_client.go)
+        - func decodeMetadata(headers) (行 ~600 in http2_server.go)
+        --
+        note: 传输层元数据映射\nHTTP/2 头部转换
+    }
+}
+
+package "二进制元数据 (Binary Metadata)" BINARY_COLOR {
+    RECTANGLE BinaryMetadata {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 800-900 行
+        --
+        **函数实现**:
+        - func encodeBinHdr(v []byte) string (行 ~800)
+        - func decodeBinHdr(v string) ([]byte, error) (行 ~830)
+        - func isBinaryKey(k string) bool (行 ~860)
+        - func validateKey(k string) error (行 ~880)
+        --
+        note: 文件: metadata/metadata.go\n二进制元数据处理函数
+    }
+    
+    RECTANGLE BinaryEncoder {
+        **文件位置**: internal/grpcutil/encode.go
+        **行数范围**: 约 50-150 行
+        --
+        **函数实现**:
+        - func EncodeBinaryHeader(v []byte) string (行 ~50)
+        - func DecodeBinaryHeader(v string) ([]byte, error) (行 ~100)
+        --
+        note: 文件: internal/grpcutil/encode.go\n二进制编码工具函数
+    }
+    
+    RECTANGLE BinaryValidator {
+        **文件位置**: metadata/metadata.go
+        **行数范围**: 约 950-1000 行
+        --
+        **验证函数**:
+        - func validHeaderFieldKey(k string) bool (行 ~950)
+        - func validHeaderFieldValue(v string) bool (行 ~980)
+        --
+        note: 二进制元数据验证函数
+    }
+}
+
+package "流元数据处理 (Stream Metadata)" {
+    RECTANGLE ClientStreamMetadata {
+        **文件位置**: stream.go
+        **行数范围**: 约 200-400 行
+        --
+        **相关方法**:
+        - func (cs *clientStream) Header() (行 ~200)
+        - func (cs *clientStream) Trailer() (行 ~250)
+        - func (cs *clientStream) SetHeader() (行 ~300)
+        --
+        note: 文件: stream.go\n客户端流元数据处理
+    }
+    
+    RECTANGLE ServerStreamMetadata {
+        **文件位置**: stream.go
+        **行数范围**: 约 500-700 行
+        --
+        **相关方法**:
+        - func (ss *serverStream) SetHeader() (行 ~500)
+        - func (ss *serverStream) SendHeader() (行 ~550)
+        - func (ss *serverStream) SetTrailer() (行 ~600)
+        --
+        note: 服务端流元数据处理
+    }
+    
+    RECTANGLE StreamHeaders {
+        **文件位置**: internal/transport/http2_client.go, http2_server.go
+        **行数范围**: 约 800-1200 行
+        --
+        **相关函数**:
+        - func (t *http2Client) writeHeader() (行 ~800)
+        - func (t *http2Server) writeHeader() (行 ~1000)
+        - func (t *http2Server) writeStatus() (行 ~1100)
+        --
+        note: 传输层头部和尾部处理
+    }
+}
+
+package "拦截器元数据 (Interceptor Metadata)" {
+    RECTANGLE MetadataInterceptor {
+        **文件位置**: examples/features/interceptor/client/main.go
+        **行数范围**: 约 50-150 行
+        --
+        **示例实现**:
+        - func unaryInterceptor() (行 ~50)
+        - func streamInterceptor() (行 ~100)
+        --
+        note: 文件: examples/features/interceptor/\n元数据拦截器示例
+    }
+    
+    RECTANGLE MetadataExtraction {
+        **文件位置**: 用户自定义拦截器
+        --
+        **常见模式**:
+        - 从 context 提取元数据
+        - 添加认证信息
+        - 记录追踪信息
+        - 验证请求头
+        --
+        note: 拦截器中的元数据提取模式
+    }
+}
+
+package "特殊元数据处理 (Special Metadata)" {
+    RECTANGLE AuthMetadata {
+        **文件位置**: credentials/oauth/oauth.go
+        **行数范围**: 约 100-200 行
+        --
+        **相关方法**:
+        - func (ts *TokenSource) GetRequestMetadata() (行 ~100)
+        - 添加 Authorization 头部
+        --
+        note: 文件: credentials/oauth/oauth.go\n认证元数据处理
+    }
+    
+    RECTANGLE TracingMetadata {
+        **文件位置**: 第三方追踪库集成
+        --
+        **常见实现**:
+        - OpenTelemetry 集成
+        - Jaeger 追踪
+        - Zipkin 追踪
+        - 自定义追踪
+        --
+        note: 分布式追踪元数据\n通常由第三方库实现
+    }
+    
+    RECTANGLE CustomMetadata {
+        **文件位置**: 用户应用代码
+        --
+        **应用场景**:
+        - 请求 ID 传递
+        - 用户身份信息
+        - 路由提示
+        - 调试信息
+        --
+        note: 用户自定义元数据\n在应用代码中实现
+    }
+}
+
+' 定义关系和文件依赖
+MD --> metadataKey : 使用 (同文件)
+OutgoingContext --> MD : 操作 (同文件)
+IncomingContext --> MD : 操作 (同文件)
+
+ClientPropagation --> OutgoingContext : 使用 (跨文件)
+ServerPropagation --> IncomingContext : 使用 (跨文件)
+
+BinaryMetadata --> BinaryEncoder : 使用 (跨文件)
+BinaryMetadata --> BinaryValidator : 使用 (同文件)
+
+ClientStreamMetadata --> MD : 处理 (跨文件)
+ServerStreamMetadata --> MD : 处理 (跨文件)
+
+AuthMetadata --> MD : 操作 (跨文件)
+
+' 文件结构注释
+note top of MD
+  **metadata 包结构**:
+  metadata/
+  └── metadata.go (所有核心功能)
+  
+  **相关文件**:
+  ├── clientconn.go (客户端传播)
+  ├── server.go (服务端传播)
+  ├── stream.go (流元数据)
+  └── internal/transport/ (传输层映射)
+end note
+
+note bottom of BinaryMetadata
+  **二进制元数据规则**:
+  - 键名必须以 "-bin" 结尾
+  - 值使用 Base64 编码
+  - 支持任意二进制数据
+  - 自动编解码处理
+  - 严格格式验证
+end note
+
+note right of ClientPropagation
+  **客户端元数据流程**:
+  1. 创建 OutgoingContext
+  2. 拦截器处理
+  3. 传输层编码
+  4. HTTP/2 头部发送
+  5. 接收响应头部和尾部
+end note
+
+note left of ServerPropagation
+  **服务端元数据流程**:
+  1. 接收 HTTP/2 头部
+  2. 传输层解码
+  3. 创建 IncomingContext
+  4. 拦截器处理
+  5. 业务逻辑访问
+  6. 设置响应元数据
+end note
+
+' 使用模式注释
+note as N1
+  **元数据使用模式**:
+  
+  **客户端发送**:
+  ```go
+  md := metadata.New(map[string]string{
+      "key": "value",
+  })
+  ctx := metadata.NewOutgoingContext(ctx, md)
+  ```
+  
+  **服务端接收**:
+  ```go
+  md, ok := metadata.FromIncomingContext(ctx)
+  values := md.Get("key")
+  ```
+  
+  **二进制数据**:
+  ```go
+  md := metadata.Pairs("key-bin", string(binaryData))
+  ```
+end note
+
+@enduml

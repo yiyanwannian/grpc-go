@@ -1,0 +1,310 @@
+@startuml 认证授权系统架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 认证授权系统 (Authentication & Authorization) 架构设计
+
+' 定义颜色主题
+!define TRANSPORT_CREDS_COLOR #E8F5E8
+!define PERRPC_CREDS_COLOR #FFF3E0
+!define TLS_COLOR #F3E5F5
+!define OAUTH_COLOR #E3F2FD
+!define BUNDLE_COLOR #FCE4EC
+
+package "认证核心接口 (Core Interfaces)" TRANSPORT_CREDS_COLOR {
+    interface "credentials.TransportCredentials" as TransportCredentials {
+        + ClientHandshake(ctx context.Context, authority string, rawConn net.Conn): (net.Conn, AuthInfo, error)
+        + ServerHandshake(rawConn net.Conn): (net.Conn, AuthInfo, error)
+        + Info(): ProtocolInfo
+        + Clone(): TransportCredentials
+        + OverrideServerName(serverNameOverride string): error
+        --
+        note: 传输层认证接口\n负责连接级别的安全
+    }
+    
+    interface "credentials.PerRPCCredentials" as PerRPCCredentials {
+        + GetRequestMetadata(ctx context.Context, uri ...string): (map[string]string, error)
+        + RequireTransportSecurity(): bool
+        --
+        note: 请求级认证接口\n为每个 RPC 提供认证信息
+    }
+    
+    interface "credentials.Bundle" as Bundle {
+        + TransportCredentials(): TransportCredentials
+        + PerRPCCredentials(): PerRPCCredentials
+        + NewWithMode(mode string): (Bundle, error)
+        --
+        note: 认证包接口\n组合传输层和请求级认证
+    }
+    
+    RECTANGLE AuthInfo {
+        + AuthType(): string
+        --
+        note: 认证信息接口\n包含认证类型和详情
+    }
+    
+    RECTANGLE ProtocolInfo {
+        + ProtocolVersion: string
+        + SecurityProtocol: string
+        + SecurityVersion: string
+        + ServerName: string
+        --
+        note: 协议信息\n描述安全协议详情
+    }
+}
+
+package "TLS 认证 (TLS Credentials)" TLS_COLOR {
+    RECTANGLE tlsCreds {
+        - config: *tls.Config
+        --
+        + ClientHandshake(ctx, authority, rawConn): (net.Conn, AuthInfo, error)
+        + ServerHandshake(rawConn): (net.Conn, AuthInfo, error)
+        + Info(): ProtocolInfo
+        + Clone(): TransportCredentials
+        + OverrideServerName(serverNameOverride): error
+        --
+        note: TLS 传输认证实现\n基于 X.509 证书
+    }
+    
+    RECTANGLE TLSInfo {
+        - State: tls.ConnectionState
+        - CommonAuthInfo: CommonAuthInfo
+        --
+        + AuthType(): string
+        + GetSecurityValue(): ChannelzSecurityValue
+        --
+        note: TLS 认证信息\n包含 TLS 连接状态
+    }
+    
+    RECTANGLE ClientTLSConfig {
+        + ServerName: string
+        + Certificates: []tls.Certificate
+        + RootCAs: *x509.CertPool
+        + InsecureSkipVerify: bool
+        + MinVersion: uint16
+        + MaxVersion: uint16
+        + CipherSuites: []uint16
+        --
+        note: 客户端 TLS 配置
+    }
+    
+    RECTANGLE ServerTLSConfig {
+        + Certificates: []tls.Certificate
+        + ClientAuth: tls.ClientAuthType
+        + ClientCAs: *x509.CertPool
+        + GetCertificate: func(*tls.ClientHelloInfo): (*tls.Certificate, error)
+        --
+        note: 服务端 TLS 配置
+    }
+}
+
+package "ALTS 认证 (ALTS Credentials)" TLS_COLOR {
+    RECTANGLE altsCreds {
+        - config: *altsConfig
+        --
+        + ClientHandshake(ctx, authority, rawConn): (net.Conn, AuthInfo, error)
+        + ServerHandshake(rawConn): (net.Conn, AuthInfo, error)
+        + Info(): ProtocolInfo
+        + Clone(): TransportCredentials
+        --
+        note: ALTS 传输认证实现\nGoogle 云平台专用
+    }
+    
+    RECTANGLE ALTSInfo {
+        - CommonAuthInfo: CommonAuthInfo
+        - PeerServiceAccount: string
+        - LocalServiceAccount: string
+        - PeerRPCVersions: *rpcpb.RpcProtocolVersions
+        --
+        + AuthType(): string
+        + ApplicationProtocol(): string
+        + RecordProtocol(): string
+        + SecurityLevel(): SecurityLevel
+        + PeerServiceAccount(): string
+        + LocalServiceAccount(): string
+        --
+        note: ALTS 认证信息\n包含服务账户信息
+    }
+    
+    RECTANGLE altsConfig {
+        + HandshakerServiceAddress: string
+        + TargetServiceAccounts: []string
+        --
+        note: ALTS 配置选项
+    }
+}
+
+package "OAuth 认证 (OAuth Credentials)" OAUTH_COLOR {
+    RECTANGLE oauthAccess {
+        - token: oauth2.TokenSource
+        --
+        + GetRequestMetadata(ctx, uri): (map[string]string, error)
+        + RequireTransportSecurity(): bool
+        --
+        note: OAuth 访问令牌认证\n基于 OAuth 2.0
+    }
+    
+    RECTANGLE jwtAccess {
+        - jsonKey: []byte
+        - audience: string
+        - subject: string
+        - scopes: []string
+        --
+        + GetRequestMetadata(ctx, uri): (map[string]string, error)
+        + RequireTransportSecurity(): bool
+        --
+        note: JWT 访问令牌认证\n基于 JSON Web Token
+    }
+    
+    RECTANGLE serviceAccountKey {
+        - Type: string
+        + ProjectID: string
+        + PrivateKeyID: string
+        + PrivateKey: string
+        + ClientEmail: string
+        + ClientID: string
+        + AuthURI: string
+        + TokenURI: string
+        --
+        note: 服务账户密钥\nGoogle 服务账户认证
+    }
+    
+    RECTANGLE TokenSource {
+        + Token(): (*oauth2.Token, error)
+        --
+        note: 令牌源接口\n提供访问令牌
+    }
+}
+
+package "认证包实现 (Bundle Implementations)" BUNDLE_COLOR {
+    RECTANGLE googleDefaultCreds {
+        - transportCreds: TransportCredentials
+        - perRPCCreds: PerRPCCredentials
+        --
+        + TransportCredentials(): TransportCredentials
+        + PerRPCCredentials(): PerRPCCredentials
+        + NewWithMode(mode): (Bundle, error)
+        --
+        note: Google 默认认证包\n自动检测环境配置
+    }
+    
+    RECTANGLE computeEngineCreds {
+        - transportCreds: TransportCredentials
+        - perRPCCreds: PerRPCCredentials
+        --
+        + TransportCredentials(): TransportCredentials
+        + PerRPCCredentials(): PerRPCCredentials
+        + NewWithMode(mode): (Bundle, error)
+        --
+        note: Compute Engine 认证包\n基于元数据服务
+    }
+    
+    RECTANGLE applicationDefaultCreds {
+        - transportCreds: TransportCredentials
+        - perRPCCreds: PerRPCCredentials
+        - scopes: []string
+        --
+        + TransportCredentials(): TransportCredentials
+        + PerRPCCredentials(): PerRPCCredentials
+        + NewWithMode(mode): (Bundle, error)
+        --
+        note: 应用默认认证包\n基于环境变量或文件
+    }
+}
+
+package "不安全认证 (Insecure Credentials)" {
+    RECTANGLE insecureCreds {
+        --
+        + ClientHandshake(ctx, authority, rawConn): (net.Conn, AuthInfo, error)
+        + ServerHandshake(rawConn): (net.Conn, AuthInfo, error)
+        + Info(): ProtocolInfo
+        + Clone(): TransportCredentials
+        --
+        note: 不安全传输认证\n明文传输，仅用于测试
+    }
+    
+    RECTANGLE InsecureInfo {
+        - CommonAuthInfo: CommonAuthInfo
+        --
+        + AuthType(): string
+        --
+        note: 不安全认证信息
+    }
+}
+
+' 定义关系
+tlsCreds ..|> TransportCredentials : 实现
+altsCreds ..|> TransportCredentials : 实现
+insecureCreds ..|> TransportCredentials : 实现
+
+oauthAccess ..|> PerRPCCredentials : 实现
+jwtAccess ..|> PerRPCCredentials : 实现
+
+googleDefaultCreds ..|> Bundle : 实现
+computeEngineCreds ..|> Bundle : 实现
+applicationDefaultCreds ..|> Bundle : 实现
+
+tlsCreds --> TLSInfo : 创建
+altsCreds --> ALTSInfo : 创建
+insecureCreds --> InsecureInfo : 创建
+
+tlsCreds --> ClientTLSConfig : 使用
+tlsCreds --> ServerTLSConfig : 使用
+
+altsCreds --> altsConfig : 使用
+
+oauthAccess --> TokenSource : 使用
+jwtAccess --> serviceAccountKey : 使用
+
+googleDefaultCreds --> TransportCredentials : 组合
+googleDefaultCreds --> PerRPCCredentials : 组合
+
+' 注释说明
+note top of TransportCredentials
+  **传输层认证职责：**
+  1. 建立安全连接
+  2. 验证对端身份
+  3. 协商加密参数
+  4. 提供认证信息
+  5. 管理证书生命周期
+end note
+
+note bottom of PerRPCCredentials
+  **请求级认证职责：**
+  1. 为每个 RPC 提供认证
+  2. 管理访问令牌
+  3. 处理令牌刷新
+  4. 添加认证头部
+  5. 验证传输安全要求
+end note
+
+note right of tlsCreds
+  **TLS 认证特点：**
+  - 基于 X.509 证书
+  - 支持双向认证
+  - 提供传输加密
+  - 证书链验证
+  - 主机名验证
+end note
+
+note left of altsCreds
+  **ALTS 认证特点：**
+  - Google 云平台专用
+  - 基于服务身份
+  - 自动证书管理
+  - 高性能加密
+  - 无需手动配置
+end note
+
+' 时序图注释
+note as N1
+  **认证握手流程：**
+  1. 客户端发起连接
+  2. 传输层认证握手
+  3. 验证证书/身份
+  4. 建立安全连接
+  5. 每个 RPC 添加认证头
+  6. 服务端验证请求
+end note
+
+@enduml

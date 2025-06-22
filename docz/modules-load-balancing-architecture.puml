@@ -1,0 +1,276 @@
+@startuml 负载均衡机制架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 负载均衡机制 (Load Balancing) 架构设计
+
+' 定义颜色主题
+!define BALANCER_COLOR #E8F5E8
+!define PICKER_COLOR #FFF3E0
+!define SUBCONN_COLOR #F3E5F5
+!define STRATEGY_COLOR #E3F2FD
+!define STATE_COLOR #FCE4EC
+
+package "负载均衡核心接口 (Core Interfaces)" BALANCER_COLOR {
+    interface "balancer.Balancer" as Balancer {
+        + UpdateClientConnState(ClientConnState): error
+        + ResolverError(error)
+        + UpdateSubConnState(SubConn, SubConnState)
+        + Close()
+        --
+        note: 负载均衡器核心接口\n管理连接状态和子连接
+    }
+    
+    interface "balancer.Builder" as Builder {
+        + Build(cc ClientConn, opts BuildOptions): Balancer
+        + Name(): string
+        --
+        note: 负载均衡器构建器接口\n用于创建具体的负载均衡器
+    }
+    
+    interface "balancer.ClientConn" as ClientConn {
+        + NewSubConn(addrs []resolver.Address, opts NewSubConnOptions): (SubConn, error)
+        + RemoveSubConn(SubConn)
+        + UpdateState(State)
+        + ResolveNow(resolver.ResolveNowOptions)
+        + Target(): string
+        --
+        note: 客户端连接接口\n提供给负载均衡器的回调
+    }
+    
+    RECTANGLE ClientConnState {
+        + ResolverState: resolver.State
+        + BalancerConfig: serviceconfig.LoadBalancingConfig
+        --
+        note: 客户端连接状态\n包含解析器状态和配置
+    }
+}
+
+package "连接选择器 (Picker)" PICKER_COLOR {
+    interface "balancer.Picker" as Picker {
+        + Pick(PickInfo): (PickResult, error)
+        --
+        note: 连接选择器接口\n负责为每个 RPC 选择连接
+    }
+    
+    RECTANGLE PickInfo {
+        + FullMethodName: string
+        + Ctx: context.Context
+        --
+        note: 选择信息\n包含方法名和上下文
+    }
+    
+    RECTANGLE PickResult {
+        + SubConn: SubConn
+        + Done: func(DoneInfo)
+        + Metadata: metadata.MD
+        --
+        note: 选择结果\n包含选中的连接和回调
+    }
+    
+    RECTANGLE DoneInfo {
+        + Err: error
+        + Trailer: metadata.MD
+        + BytesSent: int
+        + BytesReceived: int
+        + ServerLoad: *orcapb.ServerMetrics
+        --
+        note: 完成信息\n用于收集请求统计
+    }
+}
+
+package "子连接管理 (SubConn Management)" SUBCONN_COLOR {
+    interface "balancer.SubConn" as SubConn {
+        + UpdateAddresses([]resolver.Address)
+        + Connect()
+        + GetOrBuildProducer(ProducerBuilder): (Producer, func())
+        --
+        note: 子连接接口\n管理到单个后端的连接
+    }
+    
+    RECTANGLE SubConnState {
+        + ConnectivityState: connectivity.State
+        + ConnectionError: error
+        --
+        note: 子连接状态\n包含连接状态和错误信息
+    }
+    
+    enum connectivity.State {
+        Idle
+        Connecting
+        Ready
+        TransientFailure
+        Shutdown
+        --
+        note: 连接状态枚举
+    }
+    
+    RECTANGLE NewSubConnOptions {
+        + CredsBundle: credentials.Bundle
+        + StateListener: func(SubConnState)
+        + HealthCheckEnabled: bool
+        --
+        note: 子连接创建选项
+    }
+}
+
+package "负载均衡策略 (Balancing Strategies)" STRATEGY_COLOR {
+    RECTANGLE pickfirstBalancer {
+        - state: connectivity.State
+        - cc: balancer.ClientConn
+        - subConn: balancer.SubConn
+        --
+        + UpdateClientConnState(state): error
+        + UpdateSubConnState(sc, state)
+        + Close()
+        --
+        note: 首选策略实现\n总是选择第一个可用连接
+    }
+    
+    RECTANGLE roundRobinBalancer {
+        - cc: balancer.ClientConn
+        - subConns: map[balancer.SubConn]*subConnInfo
+        - picker: balancer.Picker
+        - state: connectivity.State
+        --
+        + UpdateClientConnState(state): error
+        + UpdateSubConnState(sc, state)
+        + regeneratePicker()
+        --
+        note: 轮询策略实现\n轮流选择可用连接
+    }
+    
+    RECTANGLE weightedRoundRobinBalancer {
+        - cc: balancer.ClientConn
+        - subConns: map[balancer.SubConn]*weightedSubConn
+        - picker: *weightedPicker
+        - config: *lbConfig
+        --
+        + UpdateClientConnState(state): error
+        + UpdateSubConnState(sc, state)
+        + updateWeights()
+        --
+        note: 加权轮询策略实现\n基于权重选择连接
+    }
+    
+    RECTANGLE ringHashBalancer {
+        - cc: balancer.ClientConn
+        - ring: *ring
+        - subConns: map[balancer.SubConn]*subConnInfo
+        - picker: *ringHashPicker
+        --
+        + UpdateClientConnState(state): error
+        + UpdateSubConnState(sc, state)
+        + buildRing()
+        --
+        note: 一致性哈希策略实现\n基于哈希环选择连接
+    }
+}
+
+package "选择器实现 (Picker Implementations)" PICKER_COLOR {
+    RECTANGLE pickfirstPicker {
+        - subConn: balancer.SubConn
+        --
+        + Pick(PickInfo): (PickResult, error)
+        --
+        note: 首选选择器\n总是返回同一个连接
+    }
+    
+    RECTANGLE rrPicker {
+        - subConns: []balancer.SubConn
+        - mu: sync.Mutex
+        - next: int
+        --
+        + Pick(PickInfo): (PickResult, error)
+        --
+        note: 轮询选择器\n轮流返回连接
+    }
+    
+    RECTANGLE weightedPicker {
+        - subConns: []*weightedSubConn
+        - totalWeight: int64
+        --
+        + Pick(PickInfo): (PickResult, error)
+        + updateWeights()
+        --
+        note: 加权选择器\n基于权重选择连接
+    }
+    
+    RECTANGLE ringHashPicker {
+        - ring: *ring
+        --
+        + Pick(PickInfo): (PickResult, error)
+        + hash(key): uint64
+        --
+        note: 哈希选择器\n基于请求特征哈希选择
+    }
+}
+
+' 定义关系
+Balancer --> ClientConn : 使用
+Balancer --> SubConn : 管理
+Balancer --> Picker : 创建
+Builder --> Balancer : 创建
+
+Picker --> PickInfo : 接收
+Picker --> PickResult : 返回
+PickResult --> SubConn : 包含
+
+SubConn --> SubConnState : 维护状态
+SubConn --> connectivity.State : 状态枚举
+SubConn --> NewSubConnOptions : 创建选项
+
+' 策略实现关系
+pickfirstBalancer ..|> Balancer : 实现
+roundRobinBalancer ..|> Balancer : 实现
+weightedRoundRobinBalancer ..|> Balancer : 实现
+ringHashBalancer ..|> Balancer : 实现
+
+' 选择器实现关系
+pickfirstPicker ..|> Picker : 实现
+rrPicker ..|> Picker : 实现
+weightedPicker ..|> Picker : 实现
+ringHashPicker ..|> Picker : 实现
+
+' 策略与选择器关系
+pickfirstBalancer --> pickfirstPicker : 创建
+roundRobinBalancer --> rrPicker : 创建
+weightedRoundRobinBalancer --> weightedPicker : 创建
+ringHashBalancer --> ringHashPicker : 创建
+
+' 注释说明
+note top of Balancer
+  **负载均衡器职责：**
+  1. 管理子连接生命周期
+  2. 监听连接状态变化
+  3. 根据策略创建选择器
+  4. 处理解析器错误
+  5. 聚合连接状态
+end note
+
+note bottom of Picker
+  **选择器工作流程：**
+  1. 接收 RPC 调用信息
+  2. 根据策略选择连接
+  3. 返回选中的子连接
+  4. 提供完成回调
+  5. 收集请求统计信息
+end note
+
+note right of SubConn
+  **子连接状态转换：**
+  Idle → Connecting → Ready
+  Ready → TransientFailure (失败)
+  TransientFailure → Connecting (重试)
+  任何状态 → Shutdown (关闭)
+end note
+
+note left of roundRobinBalancer
+  **轮询策略特点：**
+  - 平均分配请求
+  - 适合同质化后端
+  - 简单高效
+  - 无状态选择
+end note
+
+@enduml

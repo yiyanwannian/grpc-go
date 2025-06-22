@@ -1,0 +1,232 @@
+@startuml 客户端连接管理架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 客户端连接管理 (ClientConn) 架构设计
+
+' 定义颜色主题
+!define CLIENT_COLOR #E3F2FD
+!define RESOLVER_COLOR #F3E5F5
+!define BALANCER_COLOR #E8F5E8
+!define TRANSPORT_COLOR #FFF3E0
+!define STATE_COLOR #FCE4EC
+
+package "客户端连接核心 (ClientConn Core)" CLIENT_COLOR {
+    RECTANGLE ClientConn {
+        - target: string
+        - ctx: context.Context
+        - cancel: context.CancelFunc
+        - mu: sync.RWMutex
+        - resolverWrapper: *ccResolverWrapper
+        - balancerWrapper: *ccBalancerWrapper
+        - conns: map[*addrConn]struct{}
+        - sc: *ServiceConfig
+        - state: connectivity.State
+        --
+        + NewClient(target, opts): *ClientConn
+        + Invoke(ctx, method, req, resp): error
+        + NewStream(ctx, desc, method): ClientStream
+        + GetState(): connectivity.State
+        + WaitForStateChange(ctx, state): bool
+        + Close(): error
+        --
+        note: 客户端连接管理核心\n负责协调各个组件
+    }
+    
+    RECTANGLE DialOptions {
+        + WithTransportCredentials()
+        + WithUnaryInterceptor()
+        + WithStreamInterceptor()
+        + WithKeepaliveParams()
+        + WithDefaultServiceConfig()
+        --
+        note: 连接配置选项\n函数式选项模式
+    }
+}
+
+package "服务发现包装器 (Resolver Wrapper)" RESOLVER_COLOR {
+    RECTANGLE ccResolverWrapper {
+        - cc: *ClientConn
+        - resolverMu: sync.Mutex
+        - resolver: resolver.Resolver
+        - done: *grpcsync.Event
+        - curState: resolver.State
+        --
+        + start(): error
+        + close()
+        + UpdateState(state): error
+        + ReportError(err)
+        --
+        note: 解析器包装器\n管理服务发现生命周期
+    }
+    
+    interface "resolver.Resolver" as ResolverInterface {
+        + ResolveNow(opts)
+        + Close()
+        --
+        note: 服务发现接口
+    }
+    
+    interface "resolver.ClientConn" as ResolverClientConn {
+        + UpdateState(state): error
+        + ReportError(err)
+        --
+        note: 解析器回调接口
+    }
+}
+
+package "负载均衡包装器 (Balancer Wrapper)" BALANCER_COLOR {
+    RECTANGLE ccBalancerWrapper {
+        - cc: *ClientConn
+        - balancer: balancer.Balancer
+        - stateChangeQueue: *grpcsync.CallbackSerializer
+        - ccUpdateCh: chan *balancer.ClientConnState
+        - done: *grpcsync.Event
+        --
+        + start(): error
+        + close()
+        + updateClientConnState(state)
+        + updateSubConnState(sc, state)
+        --
+        note: 负载均衡器包装器\n管理负载均衡生命周期
+    }
+    
+    interface "balancer.Balancer" as BalancerInterface {
+        + UpdateClientConnState(state): error
+        + ResolverError(err)
+        + UpdateSubConnState(sc, state)
+        + Close()
+        --
+        note: 负载均衡器接口
+    }
+    
+    interface "balancer.ClientConn" as BalancerClientConn {
+        + NewSubConn(addrs, opts): SubConn
+        + RemoveSubConn(sc)
+        + UpdateState(state)
+        --
+        note: 负载均衡器回调接口
+    }
+}
+
+package "地址连接管理 (Address Connection)" TRANSPORT_COLOR {
+    RECTANGLE addrConn {
+        - ctx: context.Context
+        - cancel: context.CancelFunc
+        - cc: *ClientConn
+        - dopts: dialOptions
+        - acbw: *acBalancerWrapper
+        - scopts: balancer.NewSubConnOptions
+        - transport: transport.ClientTransport
+        - state: connectivity.State
+        - backoffIdx: int
+        - resetBackoff: chan struct{}
+        --
+        + connect(): error
+        + tryAllAddrs(addrs): error
+        + createTransport(addr): error
+        + updateConnectivityState(state, err)
+        + resetConnectBackoff()
+        + tearDown(err)
+        --
+        note: 地址连接管理\n管理到单个地址的连接
+    }
+    
+    RECTANGLE acBalancerWrapper {
+        - ac: *addrConn
+        - stateListener: func(SubConnState)
+        --
+        + updateState(state)
+        --
+        note: 地址连接的负载均衡包装器
+    }
+    
+    interface "transport.ClientTransport" as ClientTransport {
+        + NewStream(ctx, callHdr): *ClientStream
+        + Close(err)
+        + GracefulClose()
+        + Error(): <-chan struct{}
+        + GoAway(): <-chan struct{}
+        --
+        note: 客户端传输接口
+    }
+}
+
+package "连接状态管理 (Connectivity State)" STATE_COLOR {
+    enum connectivity.State {
+        Idle
+        Connecting
+        Ready
+        TransientFailure
+        Shutdown
+        --
+        note: 连接状态枚举
+    }
+    
+    RECTANGLE StateNotifier {
+        - mu: sync.RWMutex
+        - state: connectivity.State
+        - watchers: []chan struct{}
+        --
+        + updateState(state)
+        + waitForStateChange(ctx, state): bool
+        + notifyWatchers()
+        --
+        note: 状态变化通知器
+    }
+}
+
+' 定义关系
+ClientConn --> ccResolverWrapper : 管理
+ClientConn --> ccBalancerWrapper : 管理
+ClientConn --> addrConn : 创建和管理
+ClientConn --> DialOptions : 配置
+
+ccResolverWrapper --> ResolverInterface : 包装
+ccResolverWrapper ..|> ResolverClientConn : 实现
+
+ccBalancerWrapper --> BalancerInterface : 包装
+ccBalancerWrapper ..|> BalancerClientConn : 实现
+
+addrConn --> acBalancerWrapper : 包含
+addrConn --> ClientTransport : 使用
+addrConn --> connectivity.State : 维护状态
+
+ClientConn --> connectivity.State : 聚合状态
+ClientConn --> StateNotifier : 状态通知
+
+' 时序图：连接建立流程
+note top of ClientConn
+  **连接建立流程：**
+  1. NewClient() 创建 ClientConn
+  2. 启动 resolverWrapper 进行服务发现
+  3. 启动 balancerWrapper 进行负载均衡
+  4. 创建 addrConn 建立实际连接
+  5. 更新连接状态并通知上层
+end note
+
+note bottom of addrConn
+  **地址连接状态转换：**
+  Idle → Connecting → Ready
+  Connecting → TransientFailure (失败时)
+  Ready → TransientFailure (断开时)
+  任何状态 → Shutdown (关闭时)
+end note
+
+note right of ccResolverWrapper
+  **服务发现集成：**
+  - 监听地址变化
+  - 更新服务配置
+  - 错误处理和重试
+  - 与负载均衡器协调
+end note
+
+note left of ccBalancerWrapper
+  **负载均衡集成：**
+  - 管理子连接池
+  - 选择连接策略
+  - 状态聚合
+  - Picker 更新
+end note
+
+@enduml

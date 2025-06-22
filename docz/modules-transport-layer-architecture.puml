@@ -1,0 +1,373 @@
+@startuml 传输层实现架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 传输层实现 (Transport Layer) 架构设计
+
+' 定义颜色主题
+!define TRANSPORT_COLOR #E8F5E8
+!define HTTP2_COLOR #FFF3E0
+!define STREAM_COLOR #F3E5F5
+!define FRAME_COLOR #E3F2FD
+!define FLOW_COLOR #FCE4EC
+
+package "传输层核心接口 (Core Interfaces)" TRANSPORT_COLOR {
+    interface "transport.ClientTransport" as ClientTransport {
+        + NewStream(ctx context.Context, callHdr *CallHdr): (*ClientStream, error)
+        + Close(err error)
+        + GracefulClose()
+        + Error(): <-chan struct{}
+        + GoAway(): <-chan struct{}
+        + GetGoAwayReason(): (GoAwayReason, string)
+        + RemoteAddr(): net.Addr
+        --
+        note: 客户端传输接口\n管理客户端到服务端的连接
+    }
+    
+    interface "transport.ServerTransport" as ServerTransport {
+        + HandleStreams(context.Context, func(*ServerStream))
+        + Close(err error)
+        + Peer(): *peer.Peer
+        + Drain(debugData string)
+        --
+        note: 服务端传输接口\n处理来自客户端的连接
+    }
+    
+    RECTANGLE CallHdr {
+        + Host: string
+        + Method: string
+        + SendCompress: string
+        + Creds: credentials.PerRPCCredentials
+        + ContentSubtype: string
+        + PreviousAttempts: int
+        --
+        note: RPC 调用头信息\n包含方法名、压缩等信息
+    }
+    
+    RECTANGLE ConnectOptions {
+        + Dialer: func(context.Context, string): (net.Conn, error)
+        + UserAgent: string
+        + Authority: string
+        + Creds: credentials.TransportCredentials
+        + KeepaliveParams: keepalive.ClientParameters
+        + StatsHandlers: []stats.Handler
+        + InitialWindowSize: int32
+        + InitialConnWindowSize: int32
+        --
+        note: 连接选项\n配置传输层参数
+    }
+}
+
+package "HTTP/2 客户端传输 (HTTP/2 Client)" HTTP2_COLOR {
+    RECTANGLE http2Client {
+        - lastRead: int64
+        - ctx: context.Context
+        - cancel: context.CancelFunc
+        - ctxDone: <-chan struct{}
+        - userAgent: string
+        - address: resolver.Address
+        - conn: net.Conn
+        - loopy: *loopyWriter
+        - remoteAddr: net.Addr
+        - localAddr: net.Addr
+        - authInfo: credentials.AuthInfo
+        - readerDone: chan struct{}
+        - writerDone: chan struct{}
+        - goAway: chan struct{}
+        - framer: *framer
+        - controlBuf: *controlBuffer
+        - fc: *trInFlow
+        - scheme: string
+        - isSecure: bool
+        - perRPCCreds: []credentials.PerRPCCredentials
+        - kp: keepalive.ClientParameters
+        - keepaliveEnabled: bool
+        - statsHandlers: []stats.Handler
+        - initialWindowSize: int32
+        - bdpEst: *bdpEstimator
+        - mu: sync.Mutex
+        - activeStreams: map[uint32]*Stream
+        - streamQuota: int64
+        - streamsQuotaAvailable: chan struct{}
+        - waitingStreams: uint32
+        - nextID: uint32
+        - maxConcurrentStreams: uint32
+        --
+        + NewStream(ctx, callHdr): (*ClientStream, error)
+        + CloseStream(stream, err)
+        + Close(err)
+        + GracefulClose()
+        + Write(stream, hdr, data, opts): error
+        + getStream(id): *Stream
+        + updateWindow(stream, n): error
+        + operateHeaders(frame): error
+        + handleData(frame): error
+        + handleRSTStream(frame): error
+        + handleSettings(frame): error
+        + handlePing(frame): error
+        + handleGoAway(frame): error
+        + handleWindowUpdate(frame): error
+        --
+        note: HTTP/2 客户端传输实现\n管理客户端连接和流
+    }
+    
+    RECTANGLE loopyWriter {
+        - run: func() error
+        - cbuf: *controlBuffer
+        - side: side
+        - writeHeaderLock: sync.Mutex
+        --
+        + run(): error
+        + writeHeader(streamID, endStream, hf, onWrite): error
+        + writeData(streamID, endStream, data, onWrite): error
+        + writeRSTStream(streamID, code): error
+        + writePing(ack, data): error
+        + writeGoAway(maxStreamID, code, debugData): error
+        + writeWindowUpdate(streamID, increment): error
+        --
+        note: 循环写入器\n负责发送 HTTP/2 帧
+    }
+}
+
+package "HTTP/2 服务端传输 (HTTP/2 Server)" HTTP2_COLOR {
+    RECTANGLE http2Server {
+        - ctx: context.Context
+        - cancel: context.CancelFunc
+        - conn: net.Conn
+        - loopy: *loopyWriter
+        - readerDone: chan struct{}
+        - writerDone: chan struct{}
+        - remoteAddr: net.Addr
+        - localAddr: net.Addr
+        - authInfo: credentials.AuthInfo
+        - inTapHandle: tap.ServerInHandle
+        - framer: *framer
+        - fc: *inFlow
+        - stats: []stats.Handler
+        - kp: keepalive.ServerParameters
+        - kep: keepalive.EnforcementPolicy
+        - initialWindowSize: int32
+        - bdpEst: *bdpEstimator
+        - maxSendHeaderListSize: *uint32
+        - mu: sync.Mutex
+        - activeStreams: map[uint32]*Stream
+        - streamQuota: int64
+        - state: transportState
+        - writableChan: chan int
+        - shutdownChan: chan struct{}
+        - czData: *channelzData
+        --
+        + HandleStreams(ctx, handler)
+        + writeHeader(stream, md): error
+        + write(stream, hdr, data, opts): error
+        + writeStatus(stream, status): error
+        + Close(err)
+        + Drain(debugData)
+        + operateHeaders(frame): *Stream
+        + handleData(frame): error
+        + handleRSTStream(frame): error
+        + handleSettings(frame): error
+        + handlePing(frame): error
+        + handleGoAway(frame): error
+        + handleWindowUpdate(frame): error
+        --
+        note: HTTP/2 服务端传输实现\n处理服务端连接和流
+    }
+}
+
+package "流管理 (Stream Management)" STREAM_COLOR {
+    RECTANGLE Stream {
+        - id: uint32
+        - st: ServerTransport
+        - ctx: context.Context
+        - cancel: context.CancelFunc
+        - done: chan struct{}
+        - ctxDone: <-chan struct{}
+        - method: string
+        - recvCompress: string
+        - sendCompress: string
+        - buf: *recvBuffer
+        - trReader: io.Reader
+        - fc: *inFlow
+        - wq: *writeQuota
+        - recv: chan recvMsg
+        - sendQuotaPool: *quotaPool
+        - headerChan: chan struct{}
+        - headerDone: uint32
+        - state: streamState
+        - statusCode: codes.Code
+        - statusDesc: string
+        --
+        + Read(n): (mem.BufferSlice, error)
+        + Write(hdr, data, opts): error
+        + finish(rst)
+        + closeStream()
+        + updateHeaderListSize(n)
+        + onHeaderListSizeErr(): error
+        --
+        note: RPC 流抽象\n管理单个 RPC 调用的数据流
+    }
+    
+    RECTANGLE ClientStream {
+        + *Stream
+        - ct: ClientTransport
+        - status: *status.Status
+        --
+        + Read(n): (mem.BufferSlice, error)
+        + Write(hdr, data, opts): error
+        + Close(err)
+        + Status(): *status.Status
+        --
+        note: 客户端流实现\n封装客户端 RPC 流
+    }
+    
+    RECTANGLE ServerStream {
+        + *Stream
+        - t: ServerTransport
+        - s: *transport.Stream
+        - p: *parser
+        - codec: encoding.Codec
+        --
+        + SetHeader(md): error
+        + SendHeader(md): error
+        + SetTrailer(md)
+        + Context(): context.Context
+        + SendMsg(m): error
+        + RecvMsg(m): error
+        --
+        note: 服务端流实现\n封装服务端 RPC 流
+    }
+}
+
+package "帧处理 (Frame Processing)" FRAME_COLOR {
+    RECTANGLE framer {
+        - writer: *bufio.Writer
+        - fr: *http2.Framer
+        --
+        + writeData(streamID, endStream, data): error
+        + writeHeaders(f): error
+        + writeRSTStream(streamID, code): error
+        + writeSettings(settings): error
+        + writePing(ack, data): error
+        + writeGoAway(maxStreamID, code, debugData): error
+        + writeWindowUpdate(streamID, increment): error
+        + readFrame(): (http2.Frame, error)
+        --
+        note: HTTP/2 帧处理器\n负责帧的读写操作
+    }
+    
+    RECTANGLE controlBuffer {
+        - ch: chan struct{}
+        - done: <-chan struct{}
+        - mu: sync.Mutex
+        - consumerWaiting: bool
+        - list: *itemList
+        --
+        + put(item): error
+        + load(): []item
+        + get(): <-chan struct{}
+        + finish()
+        --
+        note: 控制缓冲区\n管理控制帧的发送队列
+    }
+}
+
+package "流控制 (Flow Control)" FLOW_COLOR {
+    RECTANGLE inFlow {
+        - mu: sync.Mutex
+        - limit: uint32
+        - unacked: uint32
+        - readBytes: uint32
+        --
+        + newLimit(n): uint32
+        + maybeAdjust(n): uint32
+        + onData(n): error
+        + onRead(n): error
+        --
+        note: 入站流控制\n管理接收窗口大小
+    }
+    
+    RECTANGLE outFlow {
+        - mu: sync.Mutex
+        - limit: int64
+        - conn: *outFlow
+        --
+        + add(n): int64
+        + reset(): int64
+        + available(): int64
+        --
+        note: 出站流控制\n管理发送窗口大小
+    }
+    
+    RECTANGLE quotaPool {
+        - c: chan struct{}
+        --
+        + add(n)
+        + cancel()
+        + acquire(): <-chan struct{}
+        --
+        note: 配额池\n管理流量配额分配
+    }
+}
+
+' 定义关系
+http2Client ..|> ClientTransport : 实现
+http2Server ..|> ServerTransport : 实现
+
+http2Client --> loopyWriter : 使用
+http2Server --> loopyWriter : 使用
+
+http2Client --> Stream : 管理
+http2Server --> Stream : 管理
+
+ClientStream --> Stream : 继承
+ServerStream --> Stream : 继承
+
+http2Client --> framer : 使用
+http2Server --> framer : 使用
+
+http2Client --> controlBuffer : 使用
+http2Server --> controlBuffer : 使用
+
+Stream --> inFlow : 使用
+Stream --> outFlow : 使用
+Stream --> quotaPool : 使用
+
+' 注释说明
+note top of http2Client
+  **客户端传输职责：**
+  1. 建立 HTTP/2 连接
+  2. 管理流的生命周期
+  3. 处理流控制
+  4. 发送和接收帧
+  5. 处理连接错误
+end note
+
+note bottom of http2Server
+  **服务端传输职责：**
+  1. 接受 HTTP/2 连接
+  2. 处理入站流
+  3. 路由到处理器
+  4. 管理连接状态
+  5. 实现优雅关闭
+end note
+
+note right of Stream
+  **流状态管理：**
+  - 创建时为 IDLE
+  - 发送头部后为 OPEN
+  - 接收数据时为 HALF_CLOSED
+  - 完成时为 CLOSED
+  - 错误时为 RESET
+end note
+
+note left of framer
+  **帧处理流程：**
+  1. 读取 HTTP/2 帧
+  2. 解析帧类型和标志
+  3. 验证帧格式
+  4. 分发到对应处理器
+  5. 生成响应帧
+end note
+
+@enduml

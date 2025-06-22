@@ -1,0 +1,389 @@
+@startuml 认证授权系统代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 认证授权系统 (Authentication & Authorization) 代码实现位置
+
+' 定义颜色主题
+!define TRANSPORT_CREDS_COLOR #E8F5E8
+!define PERRPC_CREDS_COLOR #FFF3E0
+!define TLS_COLOR #F3E5F5
+!define OAUTH_COLOR #E3F2FD
+
+package "认证核心接口 (Core Interfaces)" TRANSPORT_CREDS_COLOR {
+    RECTANGLE TransportCredentials {
+        **文件位置**: credentials/credentials.go
+        **行数范围**: 约 50-150 行
+        --
+        **接口定义**:
+        - type TransportCredentials interface (行 ~50)
+        - ClientHandshake(ctx, authority, rawConn)
+        - ServerHandshake(rawConn)
+        - Info() ProtocolInfo
+        - Clone() TransportCredentials
+        - OverrideServerName(string) error
+        --
+        note: 文件: credentials/credentials.go\n传输层认证接口
+    }
+    
+    RECTANGLE PerRPCCredentials {
+        **文件位置**: credentials/credentials.go
+        **行数范围**: 约 200-250 行
+        --
+        **接口定义**:
+        - type PerRPCCredentials interface (行 ~200)
+        - GetRequestMetadata(ctx, uri) (map[string]string, error)
+        - RequireTransportSecurity() bool
+        --
+        note: 请求级认证接口
+    }
+    
+    RECTANGLE Bundle {
+        **文件位置**: credentials/credentials.go
+        **行数范围**: 约 300-350 行
+        --
+        **接口定义**:
+        - type Bundle interface (行 ~300)
+        - TransportCredentials() TransportCredentials
+        - PerRPCCredentials() PerRPCCredentials
+        - NewWithMode(mode string) (Bundle, error)
+        --
+        note: 认证包接口
+    }
+    
+    RECTANGLE AuthInfo {
+        **文件位置**: credentials/credentials.go
+        **行数范围**: 约 400-450 行
+        --
+        **接口定义**:
+        - type AuthInfo interface (行 ~400)
+        - AuthType() string
+        --
+        note: 认证信息接口
+    }
+    
+    RECTANGLE ProtocolInfo {
+        **文件位置**: credentials/credentials.go
+        **行数范围**: 约 500-550 行
+        --
+        **结构体定义**:
+        - type ProtocolInfo struct (行 ~500)
+        - ProtocolVersion string
+        - SecurityProtocol string
+        - SecurityVersion string
+        - ServerName string
+        --
+        note: 协议信息结构
+    }
+}
+
+package "TLS 认证 (TLS Credentials)" TLS_COLOR {
+    RECTANGLE tlsCreds {
+        **文件位置**: credentials/tls.go
+        **行数范围**: 约 50-300 行
+        --
+        **结构体定义**:
+        - type tlsCreds struct (行 ~50)
+        - config *tls.Config
+        --
+        **主要方法**:
+        - ClientHandshake() (行 ~100)
+        - ServerHandshake() (行 ~150)
+        - Info() (行 ~200)
+        - Clone() (行 ~250)
+        --
+        note: 文件: credentials/tls.go\nTLS 传输认证实现
+    }
+    
+    RECTANGLE TLSInfo {
+        **文件位置**: credentials/tls.go
+        **行数范围**: 约 350-450 行
+        --
+        **结构体定义**:
+        - type TLSInfo struct (行 ~350)
+        - State tls.ConnectionState
+        - CommonAuthInfo
+        --
+        **主要方法**:
+        - AuthType() (行 ~400)
+        - GetSecurityValue() (行 ~430)
+        --
+        note: TLS 认证信息结构
+    }
+    
+    RECTANGLE NewTLS {
+        **文件位置**: credentials/tls.go
+        **行数范围**: 约 500-600 行
+        --
+        **函数实现**:
+        - func NewTLS(c *tls.Config) TransportCredentials (行 ~500)
+        - func NewClientTLSFromFile(certFile, serverNameOverride) (行 ~550)
+        - func NewServerTLSFromFile(certFile, keyFile) (行 ~580)
+        --
+        note: TLS 认证创建函数
+    }
+}
+
+package "ALTS 认证 (ALTS Credentials)" TLS_COLOR {
+    RECTANGLE altsCreds {
+        **文件位置**: credentials/alts/alts.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type altsCreds struct (行 ~50)
+        - config *altsConfig
+        --
+        **主要方法**:
+        - ClientHandshake() (行 ~100)
+        - ServerHandshake() (行 ~150)
+        - Info() (行 ~180)
+        --
+        note: 文件: credentials/alts/alts.go\nALTS 传输认证实现
+    }
+    
+    RECTANGLE ALTSInfo {
+        **文件位置**: credentials/alts/alts.go
+        **行数范围**: 约 250-350 行
+        --
+        **结构体定义**:
+        - type ALTSInfo struct (行 ~250)
+        - CommonAuthInfo
+        - PeerServiceAccount string
+        - LocalServiceAccount string
+        --
+        **主要方法**:
+        - AuthType() (行 ~300)
+        - ApplicationProtocol() (行 ~320)
+        - RecordProtocol() (行 ~340)
+        --
+        note: ALTS 认证信息结构
+    }
+    
+    RECTANGLE NewALTS {
+        **文件位置**: credentials/alts/alts.go
+        **行数范围**: 约 400-500 行
+        --
+        **函数实现**:
+        - func NewClientCreds(opts *ClientOptions) (行 ~400)
+        - func NewServerCreds(opts *ServerOptions) (行 ~450)
+        --
+        note: ALTS 认证创建函数
+    }
+}
+
+package "OAuth 认证 (OAuth Credentials)" OAUTH_COLOR {
+    RECTANGLE oauthAccess {
+        **文件位置**: credentials/oauth/oauth.go
+        **行数范围**: 约 50-150 行
+        --
+        **结构体定义**:
+        - type TokenSource struct (行 ~50)
+        - token oauth2.TokenSource
+        --
+        **主要方法**:
+        - GetRequestMetadata() (行 ~100)
+        - RequireTransportSecurity() (行 ~130)
+        --
+        note: 文件: credentials/oauth/oauth.go\nOAuth 访问令牌认证
+    }
+    
+    RECTANGLE jwtAccess {
+        **文件位置**: credentials/oauth/jwt.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type jwtAccessCreds struct (行 ~50)
+        - jsonKey []byte
+        - audience string
+        - subject string
+        - scopes []string
+        --
+        **主要方法**:
+        - GetRequestMetadata() (行 ~100)
+        - RequireTransportSecurity() (行 ~150)
+        --
+        note: 文件: credentials/oauth/jwt.go\nJWT 访问令牌认证
+    }
+    
+    RECTANGLE NewOAuth {
+        **文件位置**: credentials/oauth/oauth.go
+        **行数范围**: 约 200-300 行
+        --
+        **函数实现**:
+        - func NewOauthAccess(token *oauth2.Token) (行 ~200)
+        - func NewApplicationDefault(ctx, scopes) (行 ~250)
+        - func NewServiceAccountFromKey(jsonKey, scopes) (行 ~280)
+        --
+        note: OAuth 认证创建函数
+    }
+    
+    RECTANGLE serviceAccountKey {
+        **文件位置**: credentials/oauth/google.go
+        **行数范围**: 约 50-150 行
+        --
+        **结构体定义**:
+        - type serviceAccountKey struct (行 ~50)
+        - Type string
+        - ProjectID string
+        - PrivateKeyID string
+        - PrivateKey string
+        - ClientEmail string
+        - ClientID string
+        --
+        note: 文件: credentials/oauth/google.go\n服务账户密钥结构
+    }
+}
+
+package "认证包实现 (Bundle Implementations)" {
+    RECTANGLE googleDefaultCreds {
+        **文件位置**: credentials/google/google.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type creds struct (行 ~50)
+        - transportCreds credentials.TransportCredentials
+        - perRPCCreds credentials.PerRPCCredentials
+        --
+        **主要方法**:
+        - TransportCredentials() (行 ~100)
+        - PerRPCCredentials() (行 ~120)
+        - NewWithMode() (行 ~150)
+        --
+        note: 文件: credentials/google/google.go\nGoogle 默认认证包
+    }
+    
+    RECTANGLE computeEngineCreds {
+        **文件位置**: credentials/google/google.go
+        **行数范围**: 约 250-350 行
+        --
+        **函数实现**:
+        - func NewComputeEngineCredentials() (行 ~250)
+        - func NewApplicationDefault(ctx, scopes) (行 ~300)
+        --
+        note: Compute Engine 认证包
+    }
+    
+    RECTANGLE NewGoogle {
+        **文件位置**: credentials/google/google.go
+        **行数范围**: 约 400-500 行
+        --
+        **函数实现**:
+        - func NewDefaultCredentials() Bundle (行 ~400)
+        - func NewComputeEngineCredentials() Bundle (行 ~450)
+        --
+        note: Google 认证包创建函数
+    }
+}
+
+package "不安全认证 (Insecure Credentials)" {
+    RECTANGLE insecureCreds {
+        **文件位置**: credentials/insecure/insecure.go
+        **行数范围**: 约 50-150 行
+        --
+        **结构体定义**:
+        - type insecureTC struct{} (行 ~50)
+        --
+        **主要方法**:
+        - ClientHandshake() (行 ~80)
+        - ServerHandshake() (行 ~100)
+        - Info() (行 ~120)
+        - Clone() (行 ~140)
+        --
+        note: 文件: credentials/insecure/insecure.go\n不安全传输认证
+    }
+    
+    RECTANGLE InsecureInfo {
+        **文件位置**: credentials/insecure/insecure.go
+        **行数范围**: 约 200-250 行
+        --
+        **结构体定义**:
+        - type insecureAuthInfo struct (行 ~200)
+        - CommonAuthInfo
+        --
+        **主要方法**:
+        - AuthType() (行 ~230)
+        --
+        note: 不安全认证信息结构
+    }
+    
+    RECTANGLE NewInsecure {
+        **文件位置**: credentials/insecure/insecure.go
+        **行数范围**: 约 300-350 行
+        --
+        **函数实现**:
+        - func NewCredentials() credentials.TransportCredentials (行 ~300)
+        --
+        note: 不安全认证创建函数
+    }
+}
+
+' 定义关系和文件依赖
+tlsCreds --> TransportCredentials : 实现 (跨文件)
+altsCreds --> TransportCredentials : 实现 (跨文件)
+insecureCreds --> TransportCredentials : 实现 (跨文件)
+
+oauthAccess --> PerRPCCredentials : 实现 (跨文件)
+jwtAccess --> PerRPCCredentials : 实现 (跨文件)
+
+googleDefaultCreds --> Bundle : 实现 (跨文件)
+computeEngineCreds --> Bundle : 实现 (跨文件)
+
+tlsCreds --> TLSInfo : 创建 (同文件)
+altsCreds --> ALTSInfo : 创建 (同文件)
+insecureCreds --> InsecureInfo : 创建 (同文件)
+
+' 文件结构注释
+note top of TransportCredentials
+  **credentials 包结构**:
+  credentials/
+  ├── credentials.go (核心接口)
+  ├── tls.go (TLS 认证)
+  ├── insecure/ (不安全认证)
+  ├── alts/ (ALTS 认证)
+  ├── oauth/ (OAuth 认证)
+  └── google/ (Google 认证包)
+end note
+
+note bottom of tlsCreds
+  **TLS 认证特性**:
+  - 基于 X.509 证书
+  - 支持双向认证
+  - 提供传输加密
+  - 证书链验证
+  - 主机名验证
+  - 支持 SNI
+end note
+
+note right of oauthAccess
+  **OAuth 包结构**:
+  credentials/oauth/
+  ├── oauth.go (OAuth 2.0)
+  ├── jwt.go (JWT 认证)
+  └── google.go (Google 服务账户)
+end note
+
+note left of altsCreds
+  **ALTS 认证特性**:
+  - Google 云平台专用
+  - 基于服务身份
+  - 自动证书管理
+  - 高性能加密
+  - 无需手动配置
+end note
+
+' 使用示例注释
+note as N1
+  **认证使用流程**:
+  1. 创建认证凭据 (TLS/OAuth/ALTS)
+  2. 配置客户端/服务端选项
+  3. 建立连接时执行握手
+  4. 每个 RPC 添加认证信息
+  5. 服务端验证认证信息
+  
+  **文件依赖关系**:
+  - 核心接口在 credentials.go
+  - 具体实现在各自的文件/包中
+  - Google 相关认证在 google/ 包
+end note
+
+@enduml

@@ -1,0 +1,266 @@
+@startuml gRPC-Go 全面系统架构图
+
+title gRPC-Go 项目全面系统架构设计 - 分层架构与核心模块
+
+!theme plain
+
+' 定义颜色主题
+!define APPLICATION_COLOR #E8F5E8
+!define RPC_COLOR #FFF3E0
+!define MIDDLEWARE_COLOR #F3E5F5
+!define TRANSPORT_COLOR #E3F2FD
+!define NETWORK_COLOR #FCE4EC
+!define EXTENSION_COLOR #F0F4C3
+
+' ================================
+' 应用层 (Application Layer)
+' ================================
+package "应用层 (Application Layer)" APPLICATION_COLOR {
+    component [用户业务代码] as UserCode
+    component [生成的 gRPC 代码] as GeneratedCode
+    component [服务注册] as ServiceRegistry
+
+    note top of UserCode : **用户应用程序**\n- 业务逻辑实现\n- gRPC 服务调用\n- 错误处理和重试\n**架构决策**: 与框架解耦，专注业务逻辑
+
+    note top of GeneratedCode : **Protocol Buffers 生成代码**\n- 服务接口定义\n- 消息类型定义\n- 序列化/反序列化方法\n**设计模式**: 代码生成模式
+
+    note top of ServiceRegistry : **服务注册机制**\n- 服务描述符管理\n- 方法路由映射\n- 反射支持\n**设计模式**: 注册表模式
+}
+
+' ================================
+' RPC 层 (RPC Layer)
+' ================================
+package "RPC 层 (RPC Layer)" RPC_COLOR {
+
+    ' 客户端子系统
+    package "客户端子系统" {
+        component [ClientConn] as ClientConn
+        component [Call Options] as CallOptions
+
+        note right of ClientConn : **客户端连接管理器**\n- 连接生命周期管理\n- RPC 调用协调\n- 状态管理 (Idle/Connecting/Ready/TransientFailure/Shutdown)\n- 子连接池管理\n**设计模式**: 外观模式 + 状态模式\n**性能优化**: 连接复用 + 异步处理
+
+        note right of CallOptions : **调用选项配置**\n- 超时设置\n- 元数据配置\n- 压缩选项\n- 重试策略\n**设计模式**: 建造者模式 + 选项模式
+    }
+
+    ' 服务端子系统
+    package "服务端子系统" {
+        component [Server] as Server
+        component [Service Info] as ServiceInfo
+
+        note left of Server : **gRPC 服务端**\n- 服务注册和管理\n- 请求路由分发\n- 连接管理\n- 优雅关闭机制\n**设计模式**: 命令模式 + 观察者模式\n**性能优化**: 协程池 + 零拷贝
+
+        note left of ServiceInfo : **服务信息管理**\n- 方法描述符\n- 处理器映射\n- 元数据管理\n**设计模式**: 元数据模式
+    }
+
+    ' 流处理子系统
+    package "流处理子系统" {
+        component [Client Stream] as ClientStream
+        component [Server Stream] as ServerStream
+
+        note bottom of ClientStream : **客户端流**\n- 发送/接收消息\n- 流控制\n- 错误处理\n**设计模式**: 流模式
+
+        note bottom of ServerStream : **服务端流**\n- 消息处理\n- 头部/尾部管理\n- 上下文传播\n**设计模式**: 流模式 + 上下文模式
+    }
+}
+
+' ================================
+' 中间件层 (Middleware Layer)
+' ================================
+package "中间件层 (Middleware Layer)" MIDDLEWARE_COLOR {
+
+    component [Interceptor Chain] as InterceptorChain
+    component [Metadata Handler] as MetadataHandler
+    component [Status & Error] as StatusError
+
+    note top of InterceptorChain : **拦截器链管理**\n- 一元/流式拦截器\n- 链式调用模式\n- 前置/后置处理\n**设计模式**: 责任链模式 + 装饰器模式\n**扩展性**: 插件化架构，支持自定义拦截器
+
+    note top of MetadataHandler : **元数据处理器**\n- 头部/尾部管理\n- 上下文传播\n- 二进制数据编码\n**设计模式**: 上下文模式 + 传播模式\n**性能优化**: 零拷贝元数据传递
+
+    note top of StatusError : **状态码和错误处理**\n- gRPC 状态码管理\n- 错误详情封装\n- 错误传播机制\n**设计模式**: 异常处理模式 + 状态模式\n**架构决策**: 标准化错误处理，提高互操作性
+}
+
+' ================================
+' 传输层 (Transport Layer)
+' ================================
+package "传输层 (Transport Layer)" TRANSPORT_COLOR {
+
+    ' HTTP/2 实现
+    package "HTTP/2 实现" {
+        component [HTTP/2 Client] as HTTP2Client
+        component [HTTP/2 Server] as HTTP2Server
+
+        note right of HTTP2Client : **HTTP/2 客户端传输**\n- 连接复用\n- 流管理\n- 帧处理\n- 流控制\n**性能优化**: 连接池 + 零拷贝 + 异步 I/O\n**架构决策**: 基于标准 HTTP/2 协议
+
+        note left of HTTP2Server : **HTTP/2 服务端传输**\n- 多路复用\n- 并发流处理\n- 背压控制\n- 优雅关闭\n**性能优化**: 协程池 + 内存池 + 批量处理\n**架构决策**: 事件驱动架构
+    }
+
+    ' 编码解码子系统
+    package "编码解码子系统" {
+        component [Codec Registry] as CodecRegistry
+        component [Compressor Registry] as CompressorRegistry
+
+        note bottom of CodecRegistry : **编解码器注册表**\n- Protocol Buffers\n- JSON 编解码器\n- 自定义编解码器\n**设计模式**: 注册表模式 + 策略模式\n**扩展性**: 支持插件化编解码器
+
+        note bottom of CompressorRegistry : **压缩器注册表**\n- Gzip 压缩\n- 自定义压缩算法\n- 自适应压缩\n**设计模式**: 策略模式 + 工厂模式\n**性能优化**: 压缩算法选择优化
+    }
+
+    ' 流控制
+    component [Flow Control] as FlowControl
+
+    note bottom of FlowControl : **流控制机制**\n- 窗口管理\n- 背压处理\n- 配额分配\n**性能优化**: 动态窗口调整 + 自适应流控\n**架构决策**: 防止快慢端不匹配
+}
+
+' ================================
+' 网络层 (Network Layer)
+' ================================
+package "网络层 (Network Layer)" NETWORK_COLOR {
+
+    ' 负载均衡子系统
+    package "负载均衡子系统" {
+        component [Balancer Registry] as BalancerRegistry
+        component [Picker] as Picker
+        component [SubConn Pool] as SubConnPool
+
+        note top of BalancerRegistry : **负载均衡器注册表**\n- 策略注册管理\n- 动态策略切换\n**设计模式**: 注册表模式 + 工厂模式\n**扩展性**: 支持自定义负载均衡策略
+
+        note top of Picker : **连接选择器**\n- 轮询 (Round Robin)\n- 加权轮询 (Weighted Round Robin)\n- 一致性哈希 (Ring Hash)\n- 首选 (Pick First)\n**设计模式**: 策略模式 + 状态模式\n**性能优化**: 无锁算法 + 缓存优化
+
+        note top of SubConnPool : **子连接池**\n- 连接复用\n- 健康检查\n- 故障转移\n**性能优化**: 连接池管理 + 预连接\n**架构决策**: 连接级别的负载均衡
+    }
+
+    ' 服务发现子系统
+    package "服务发现子系统" {
+        component [Resolver Registry] as ResolverRegistry
+        component [Address Manager] as AddressManager
+
+        note bottom of ResolverRegistry : **解析器注册表**\n- DNS 解析器\n- 手动解析器\n- xDS 解析器\n**设计模式**: 注册表模式 + 工厂模式\n**扩展性**: 支持自定义服务发现机制
+
+        note bottom of AddressManager : **地址管理器**\n- 地址列表维护\n- 变更通知\n- 服务配置管理\n**设计模式**: 观察者模式 + 发布订阅模式\n**架构决策**: 解耦服务发现和负载均衡
+    }
+
+    ' 安全子系统
+    package "安全子系统" {
+        component [Credentials] as Credentials
+
+        note bottom of Credentials : **认证凭据管理**\n- TLS 传输安全\n- OAuth 令牌认证\n- ALTS 认证\n- 自定义认证\n**设计模式**: 策略模式 + 装饰器模式\n**架构决策**: 分层安全模型
+    }
+}
+
+' ================================
+' 扩展层 (Extension Layer)
+' ================================
+package "扩展层 (Extension Layer)" EXTENSION_COLOR {
+
+    component [Health Check] as HealthCheck
+    component [Reflection] as Reflection
+    component [Channelz] as Channelz
+    component [xDS Support] as XDSSupport
+
+    note top of HealthCheck : **健康检查服务**\n- 服务健康状态监控\n- 自动故障检测\n- 健康状态报告\n**设计模式**: 监控模式 + 状态模式\n**架构决策**: 标准化健康检查协议
+
+    note top of Reflection : **服务反射**\n- 动态服务发现\n- 接口信息查询\n- 调试工具支持\n**设计模式**: 反射模式 + 元数据模式\n**扩展性**: 支持运行时服务发现
+
+    note top of Channelz : **可观测性系统**\n- 连接状态监控\n- 性能指标收集\n- 调试信息展示\n**设计模式**: 观察者模式 + 监控模式\n**架构决策**: 内置可观测性支持
+
+    note top of XDSSupport : **xDS 协议支持**\n- 动态配置管理\n- 服务网格集成\n- 流量管理\n**架构决策**: 控制平面分离 + 数据平面优化\n**扩展性**: 支持服务网格生态
+}
+
+' ================================
+' 数据流和控制流关系
+' ================================
+
+' 应用层关系
+UserCode --> GeneratedCode : 使用生成代码
+GeneratedCode --> ServiceRegistry : 注册服务
+UserCode --> ClientConn : 发起 RPC 调用
+UserCode --> Server : 实现服务
+
+' RPC 层关系
+ClientConn --> CallOptions : 配置调用选项
+ClientConn --> ClientStream : 创建客户端流
+Server --> ServiceInfo : 管理服务信息
+Server --> ServerStream : 创建服务端流
+
+' 中间件层关系
+ClientConn --> InterceptorChain : 应用客户端拦截器
+Server --> InterceptorChain : 应用服务端拦截器
+ClientStream --> MetadataHandler : 处理元数据
+ServerStream --> MetadataHandler : 处理元数据
+ClientStream --> StatusError : 处理错误状态
+ServerStream --> StatusError : 处理错误状态
+
+' 传输层关系
+ClientConn --> HTTP2Client : 使用客户端传输
+Server --> HTTP2Server : 使用服务端传输
+HTTP2Client --> FlowControl : 应用流控制
+HTTP2Server --> FlowControl : 应用流控制
+ClientStream --> CodecRegistry : 使用编解码器
+ServerStream --> CodecRegistry : 使用编解码器
+ClientStream --> CompressorRegistry : 使用压缩器
+ServerStream --> CompressorRegistry : 使用压缩器
+
+' 网络层关系
+ClientConn --> BalancerRegistry : 获取负载均衡器
+BalancerRegistry --> Picker : 创建选择器
+Picker --> SubConnPool : 选择子连接
+SubConnPool --> HTTP2Client : 建立传输连接
+ClientConn --> ResolverRegistry : 获取解析器
+ResolverRegistry --> AddressManager : 管理地址列表
+AddressManager --> BalancerRegistry : 通知地址变更
+HTTP2Client --> Credentials : 应用安全认证
+HTTP2Server --> Credentials : 应用安全认证
+
+' 扩展层关系
+Server --> HealthCheck : 集成健康检查
+Server --> Reflection : 集成服务反射
+ClientConn --> Channelz : 监控连接状态
+Server --> Channelz : 监控服务状态
+ClientConn --> XDSSupport : 支持 xDS 配置
+Server --> XDSSupport : 支持 xDS 配置
+
+' ================================
+' 关键架构说明
+' ================================
+
+note as ArchitectureNote
+**gRPC-Go 架构设计原则**
+
+**1. 分层架构设计**
+- 应用层：用户业务逻辑，与框架解耦
+- RPC 层：核心 RPC 功能，提供统一接口
+- 中间件层：横切关注点，支持插件化扩展
+- 传输层：网络通信，基于 HTTP/2 协议
+- 网络层：服务发现和负载均衡
+- 扩展层：可选功能，增强系统能力
+
+**2. 核心设计模式**
+- 外观模式：ClientConn 和 Server 提供统一接口
+- 策略模式：负载均衡、编解码、压缩算法可插拔
+- 观察者模式：状态变化通知和事件传播
+- 责任链模式：拦截器链式处理
+- 注册表模式：组件动态注册和发现
+- 工厂模式：组件创建和生命周期管理
+
+**3. 性能优化策略**
+- 连接复用：HTTP/2 多路复用减少连接开销
+- 零拷贝：减少内存拷贝提高性能
+- 对象池：复用对象减少 GC 压力
+- 异步处理：非阻塞 I/O 提高并发能力
+- 流控制：防止快慢端不匹配
+- 批量处理：减少系统调用开销
+
+**4. 扩展性设计**
+- 插件化架构：支持自定义组件
+- 接口抽象：便于替换和扩展
+- 配置驱动：运行时动态配置
+- 标准协议：遵循 gRPC 和 HTTP/2 标准
+- 服务网格：支持现代微服务架构
+
+**5. 架构决策权衡**
+- 性能 vs 功能：在保证性能的前提下提供丰富功能
+- 简单 vs 灵活：提供简单易用的 API 同时支持高级定制
+- 标准 vs 创新：遵循标准协议同时支持创新特性
+- 兼容 vs 演进：保持向后兼容同时支持新特性
+end note
+
+@enduml

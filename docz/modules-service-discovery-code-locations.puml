@@ -1,0 +1,377 @@
+@startuml 服务发现系统代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 服务发现系统 (Service Discovery) 代码实现位置
+
+' 定义颜色主题
+!define RESOLVER_COLOR #E8F5E8
+!define DNS_COLOR #FFF3E0
+!define MANUAL_COLOR #F3E5F5
+!define XDS_COLOR #E3F2FD
+
+package "服务发现核心接口 (Core Interfaces)" RESOLVER_COLOR {
+    RECTANGLE Builder {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 50-100 行
+        --
+        **接口定义**:
+        - type Builder interface (行 ~50)
+        - Build(target Target, cc ClientConn, opts BuildOptions)
+        - Scheme() string
+        --
+        note: 文件: resolver/resolver.go\n解析器构建器接口
+    }
+    
+    RECTANGLE Resolver {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 100-150 行
+        --
+        **接口定义**:
+        - type Resolver interface (行 ~100)
+        - ResolveNow(ResolveNowOptions)
+        - Close()
+        --
+        note: 解析器核心接口
+    }
+    
+    RECTANGLE ClientConn {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 200-300 行
+        --
+        **接口定义**:
+        - type ClientConn interface (行 ~200)
+        - UpdateState(State) error
+        - ReportError(error)
+        - ParseServiceConfig(string) *serviceconfig.ParseResult
+        --
+        note: 客户端连接回调接口
+    }
+    
+    RECTANGLE Target {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 350-400 行
+        --
+        **结构体定义**:
+        - type Target struct (行 ~350)
+        - Scheme string
+        - Authority string
+        - Endpoint string
+        - URL url.URL
+        --
+        note: 目标地址结构
+    }
+    
+    RECTANGLE State {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 450-500 行
+        --
+        **结构体定义**:
+        - type State struct (行 ~450)
+        - Addresses []Address
+        - ServiceConfig *serviceconfig.ParseResult
+        - Attributes *attributes.Attributes
+        --
+        note: 解析器状态结构
+    }
+    
+    RECTANGLE Address {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 500-550 行
+        --
+        **结构体定义**:
+        - type Address struct (行 ~500)
+        - Addr string
+        - ServerName string
+        - Attributes *attributes.Attributes
+        - Metadata any
+        --
+        note: 服务地址信息结构
+    }
+}
+
+package "DNS 解析器 (DNS Resolver)" DNS_COLOR {
+    RECTANGLE dnsBuilder {
+        **文件位置**: resolver/dns/dns_resolver.go
+        **行数范围**: 约 50-100 行
+        --
+        **结构体定义**:
+        - type dnsBuilder struct{} (行 ~50)
+        --
+        **主要方法**:
+        - Build() (行 ~70)
+        - Scheme() (行 ~90)
+        --
+        note: 文件: resolver/dns/dns_resolver.go\nDNS 解析器构建器
+    }
+    
+    RECTANGLE dnsResolver {
+        **文件位置**: resolver/dns/dns_resolver.go
+        **行数范围**: 约 150-600 行
+        --
+        **结构体定义**:
+        - type dnsResolver struct (行 ~150)
+        - host string
+        - port string
+        - ctx context.Context
+        - cc resolver.ClientConn
+        - rn chan struct{}
+        --
+        **主要方法**:
+        - ResolveNow() (行 ~250)
+        - Close() (行 ~300)
+        - lookup() (行 ~350)
+        - lookupSRV() (行 ~450)
+        - lookupHost() (行 ~500)
+        - lookupTXT() (行 ~550)
+        --
+        note: DNS 解析器实现
+    }
+    
+    RECTANGLE dnsWatcher {
+        **文件位置**: resolver/dns/dns_resolver.go
+        **行数范围**: 约 700-800 行
+        --
+        **结构体定义**:
+        - type dnsWatcher struct (行 ~700)
+        - r *dnsResolver
+        - freq time.Duration
+        --
+        **主要方法**:
+        - start() (行 ~750)
+        - stop() (行 ~780)
+        --
+        note: DNS 监控器实现
+    }
+}
+
+package "手动解析器 (Manual Resolver)" MANUAL_COLOR {
+    RECTANGLE manualBuilder {
+        **文件位置**: resolver/manual/manual.go
+        **行数范围**: 约 50-100 行
+        --
+        **结构体定义**:
+        - type Resolver struct (行 ~50)
+        - scheme string
+        --
+        **主要方法**:
+        - Build() (行 ~80)
+        - Scheme() (行 ~95)
+        --
+        note: 文件: resolver/manual/manual.go\n手动解析器构建器
+    }
+    
+    RECTANGLE manualResolver {
+        **文件位置**: resolver/manual/manual.go
+        **行数范围**: 约 100-300 行
+        --
+        **结构体定义**:
+        - type Resolver struct (行 ~100)
+        - BuildCallback func(...)
+        - UpdateStateCallback func(error)
+        - ResolveNowCallback func(...)
+        - CloseCallback func()
+        - mu sync.Mutex
+        - cc resolver.ClientConn
+        - lastSeenState *resolver.State
+        --
+        **主要方法**:
+        - ResolveNow() (行 ~200)
+        - Close() (行 ~220)
+        - UpdateState() (行 ~250)
+        - InitialState() (行 ~280)
+        --
+        note: 手动解析器实现
+    }
+}
+
+package "xDS 解析器 (xDS Resolver)" XDS_COLOR {
+    RECTANGLE xdsBuilder {
+        **文件位置**: xds/internal/resolver/xds_resolver.go
+        **行数范围**: 约 50-100 行
+        --
+        **结构体定义**:
+        - type xdsResolverBuilder struct{} (行 ~50)
+        --
+        **主要方法**:
+        - Build() (行 ~70)
+        - Scheme() (行 ~90)
+        --
+        note: 文件: xds/internal/resolver/xds_resolver.go\nxDS 解析器构建器
+    }
+    
+    RECTANGLE xdsResolver {
+        **文件位置**: xds/internal/resolver/xds_resolver.go
+        **行数范围**: 约 150-800 行
+        --
+        **结构体定义**:
+        - type xdsResolver struct (行 ~150)
+        - cc resolver.ClientConn
+        - logger *grpclog.PrefixLogger
+        - xdsClient xdsclient.XDSClient
+        - target resolver.Target
+        - ldsResourceName string
+        --
+        **主要方法**:
+        - ResolveNow() (行 ~300)
+        - Close() (行 ~350)
+        - onLDSUpdate() (行 ~400)
+        - onRDSUpdate() (行 ~500)
+        - onCDSUpdate() (行 ~600)
+        - onEDSUpdate() (行 ~700)
+        --
+        note: xDS 解析器实现
+    }
+    
+    RECTANGLE xdsClient {
+        **文件位置**: xds/internal/xdsclient/xdsclient.go
+        **行数范围**: 约 100-1000 行
+        --
+        **结构体定义**:
+        - type clientImpl struct (行 ~100)
+        - conn *grpc.ClientConn
+        - stream xdspb.AggregatedDiscoveryService_StreamAggregatedResourcesClient
+        - watchMap map[string]*watchInfo
+        --
+        **主要方法**:
+        - WatchListener() (行 ~300)
+        - WatchRouteConfig() (行 ~400)
+        - WatchCluster() (行 ~500)
+        - WatchEndpoints() (行 ~600)
+        --
+        note: 文件: xds/internal/xdsclient/xdsclient.go\nxDS 客户端实现
+    }
+}
+
+package "目标解析 (Target Parsing)" {
+    RECTANGLE targetParser {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 600-700 行
+        --
+        **函数实现**:
+        - func parseTarget(target string) (Target, error) (行 ~600)
+        - func parseURI(uri string) (Target, error) (行 ~650)
+        --
+        note: 文件: resolver/resolver.go\n目标地址解析函数
+    }
+    
+    RECTANGLE schemeRegistry {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 750-850 行
+        --
+        **全局变量和函数**:
+        - var m = make(map[string]Builder) (行 ~750)
+        - func Register(b Builder) (行 ~770)
+        - func Get(scheme string) Builder (行 ~800)
+        - func SetDefaultScheme(scheme string) (行 ~830)
+        --
+        note: 解析器注册表实现
+    }
+}
+
+package "初始化和注册 (Initialization)" {
+    RECTANGLE dnsInit {
+        **文件位置**: resolver/dns/dns_resolver.go
+        **行数范围**: 约 30-50 行
+        --
+        **初始化函数**:
+        - func init() (行 ~30)
+        - resolver.Register(&dnsBuilder{})
+        --
+        note: DNS 解析器自动注册
+    }
+    
+    RECTANGLE manualInit {
+        **文件位置**: resolver/manual/manual.go
+        **行数范围**: 约 30-50 行
+        --
+        **初始化函数**:
+        - func init() (行 ~30)
+        - resolver.Register(NewBuilderWithScheme("manual"))
+        --
+        note: 手动解析器自动注册
+    }
+    
+    RECTANGLE xdsInit {
+        **文件位置**: xds/internal/resolver/xds_resolver.go
+        **行数范围**: 约 30-50 行
+        --
+        **初始化函数**:
+        - func init() (行 ~30)
+        - resolver.Register(&xdsResolverBuilder{})
+        --
+        note: xDS 解析器自动注册
+    }
+}
+
+' 定义关系和文件依赖
+dnsBuilder --> Builder : 实现 (跨文件)
+dnsBuilder --> dnsResolver : 创建 (同文件)
+dnsResolver --> Resolver : 实现 (跨文件)
+dnsResolver --> dnsWatcher : 使用 (同文件)
+
+manualBuilder --> Builder : 实现 (跨文件)
+manualBuilder --> manualResolver : 创建 (同文件)
+manualResolver --> Resolver : 实现 (跨文件)
+
+xdsBuilder --> Builder : 实现 (跨文件)
+xdsBuilder --> xdsResolver : 创建 (同文件)
+xdsResolver --> Resolver : 实现 (跨文件)
+xdsResolver --> xdsClient : 使用 (跨文件)
+
+schemeRegistry --> Builder : 管理 (同文件)
+targetParser --> Target : 创建 (同文件)
+
+' 文件结构注释
+note top of Builder
+  **resolver 包结构**:
+  resolver/
+  ├── resolver.go (核心接口和注册表)
+  ├── dns/
+  │   └── dns_resolver.go (DNS 解析器)
+  ├── manual/
+  │   └── manual.go (手动解析器)
+  └── passthrough/
+      └── passthrough.go (直通解析器)
+end note
+
+note bottom of dnsResolver
+  **DNS 解析器特性**:
+  - 支持 A/AAAA 记录解析
+  - 支持 SRV 记录负载均衡
+  - 支持 TXT 记录服务配置
+  - 自动重解析机制
+  - 可配置解析频率
+end note
+
+note right of xdsResolver
+  **xDS 包结构**:
+  xds/
+  ├── internal/
+  │   ├── resolver/xds_resolver.go
+  │   ├── xdsclient/xdsclient.go
+  │   ├── balancer/
+  │   └── server/
+  └── xds.go (入口文件)
+end note
+
+note left of manualResolver
+  **手动解析器用途**:
+  - 测试和开发环境
+  - 静态服务配置
+  - 动态地址更新
+  - 故障转移测试
+  - 性能基准测试
+end note
+
+' 注册机制注释
+note as N1
+  **解析器注册流程**:
+  1. 各解析器在 init() 中调用 Register()
+  2. 全局 map 存储 scheme -> Builder
+  3. clientconn 解析目标地址获取 scheme
+  4. 通过 Get() 获取对应的构建器
+  5. 构建器创建具体的解析器实例
+end note
+
+@enduml

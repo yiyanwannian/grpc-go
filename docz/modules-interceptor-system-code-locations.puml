@@ -1,0 +1,411 @@
+@startuml 拦截器机制代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 拦截器机制 (Interceptor System) 代码实现位置
+
+' 定义颜色主题
+!define INTERCEPTOR_COLOR #E8F5E8
+!define CLIENT_COLOR #FFF3E0
+!define SERVER_COLOR #F3E5F5
+!define CHAIN_COLOR #E3F2FD
+
+package "拦截器核心接口 (Core Interfaces)" INTERCEPTOR_COLOR {
+    RECTANGLE UnaryClientInterceptor {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 50-100 行
+        --
+        **类型定义**:
+        - type UnaryClientInterceptor func (行 ~50)
+        - (ctx context.Context, method string, req, reply any, 
+        - cc *ClientConn, invoker UnaryInvoker, opts ...CallOption) error
+        --
+        note: 文件: interceptor.go\n一元客户端拦截器类型定义
+    }
+    
+    RECTANGLE StreamClientInterceptor {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 100-150 行
+        --
+        **类型定义**:
+        - type StreamClientInterceptor func (行 ~100)
+        - (ctx context.Context, desc *StreamDesc, cc *ClientConn,
+        - method string, streamer Streamer, opts ...CallOption) (ClientStream, error)
+        --
+        note: 流客户端拦截器类型定义
+    }
+    
+    RECTANGLE UnaryServerInterceptor {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 200-250 行
+        --
+        **类型定义**:
+        - type UnaryServerInterceptor func (行 ~200)
+        - (ctx context.Context, req any, info *UnaryServerInfo,
+        - handler UnaryHandler) (resp any, err error)
+        --
+        note: 一元服务端拦截器类型定义
+    }
+    
+    RECTANGLE StreamServerInterceptor {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 300-350 行
+        --
+        **类型定义**:
+        - type StreamServerInterceptor func (行 ~300)
+        - (srv any, ss ServerStream, info *StreamServerInfo,
+        - handler StreamHandler) error
+        --
+        note: 流服务端拦截器类型定义
+    }
+}
+
+package "客户端拦截器 (Client Interceptors)" CLIENT_COLOR {
+    RECTANGLE UnaryInvoker {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 400-450 行
+        --
+        **类型定义**:
+        - type UnaryInvoker func (行 ~400)
+        - (ctx context.Context, method string, req, reply any,
+        - cc *ClientConn, opts ...CallOption) error
+        --
+        note: 文件: interceptor.go\n一元调用器类型定义
+    }
+    
+    RECTANGLE Streamer {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 500-550 行
+        --
+        **类型定义**:
+        - type Streamer func (行 ~500)
+        - (ctx context.Context, desc *StreamDesc, cc *ClientConn,
+        - method string, opts ...CallOption) (ClientStream, error)
+        --
+        note: 流创建器类型定义
+    }
+    
+    RECTANGLE ClientInterceptorChain {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 600-800 行
+        --
+        **相关函数**:
+        - func chainUnaryClientInterceptors() (行 ~600)
+        - func chainStreamClientInterceptors() (行 ~700)
+        - func (cc *ClientConn) Invoke() 中的拦截器调用 (行 ~750)
+        --
+        note: 文件: clientconn.go\n客户端拦截器链实现
+    }
+    
+    RECTANGLE ClientCallOptions {
+        **文件位置**: call.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type callInfo struct (行 ~50)
+        - header *metadata.MD
+        - trailer *metadata.MD
+        - peer *peer.Peer
+        - failFast bool
+        - maxReceiveMessageSize int
+        --
+        note: 文件: call.go\n客户端调用选项结构
+    }
+}
+
+package "服务端拦截器 (Server Interceptors)" SERVER_COLOR {
+    RECTANGLE UnaryHandler {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 600-650 行
+        --
+        **类型定义**:
+        - type UnaryHandler func (行 ~600)
+        - (ctx context.Context, req any) (any, error)
+        --
+        note: 文件: interceptor.go\n一元处理器类型定义
+    }
+    
+    RECTANGLE StreamHandler {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 700-750 行
+        --
+        **类型定义**:
+        - type StreamHandler func (行 ~700)
+        - (srv any, stream ServerStream) error
+        --
+        note: 流处理器类型定义
+    }
+    
+    RECTANGLE UnaryServerInfo {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 800-850 行
+        --
+        **结构体定义**:
+        - type UnaryServerInfo struct (行 ~800)
+        - Server any
+        - FullMethod string
+        --
+        note: 一元服务信息结构
+    }
+    
+    RECTANGLE StreamServerInfo {
+        **文件位置**: interceptor.go
+        **行数范围**: 约 900-950 行
+        --
+        **结构体定义**:
+        - type StreamServerInfo struct (行 ~900)
+        - FullMethod string
+        - IsClientStream bool
+        - IsServerStream bool
+        --
+        note: 流服务信息结构
+    }
+    
+    RECTANGLE ServerInterceptorChain {
+        **文件位置**: server.go
+        **行数范围**: 约 1000-1200 行
+        --
+        **相关函数**:
+        - func chainUnaryServerInterceptors() (行 ~1000)
+        - func chainStreamServerInterceptors() (行 ~1100)
+        - func (s *Server) processUnaryRPC() 中的拦截器调用 (行 ~1150)
+        --
+        note: 文件: server.go\n服务端拦截器链实现
+    }
+}
+
+package "拦截器链管理 (Chain Management)" CHAIN_COLOR {
+    RECTANGLE ChainUnaryClient {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 300-400 行
+        --
+        **函数实现**:
+        - func chainUnaryClientInterceptors(cc, interceptors, invoker) (行 ~300)
+        - 构建客户端一元拦截器链
+        - 递归调用模式
+        --
+        note: 文件: clientconn.go\n客户端一元拦截器链构建
+    }
+    
+    RECTANGLE ChainStreamClient {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 450-550 行
+        --
+        **函数实现**:
+        - func chainStreamClientInterceptors(cc, interceptors, streamer) (行 ~450)
+        - 构建客户端流拦截器链
+        - 递归调用模式
+        --
+        note: 客户端流拦截器链构建
+    }
+    
+    RECTANGLE ChainUnaryServer {
+        **文件位置**: server.go
+        **行数范围**: 约 800-900 行
+        --
+        **函数实现**:
+        - func chainUnaryServerInterceptors(s, interceptors, info, handler) (行 ~800)
+        - 构建服务端一元拦截器链
+        - 递归调用模式
+        --
+        note: 文件: server.go\n服务端一元拦截器链构建
+    }
+    
+    RECTANGLE ChainStreamServer {
+        **文件位置**: server.go
+        **行数范围**: 约 950-1050 行
+        --
+        **函数实现**:
+        - func chainStreamServerInterceptors(s, interceptors, info, handler) (行 ~950)
+        - 构建服务端流拦截器链
+        - 递归调用模式
+        --
+        note: 服务端流拦截器链构建
+    }
+}
+
+package "拦截器配置 (Interceptor Configuration)" {
+    RECTANGLE ClientOptions {
+        **文件位置**: dialoptions.go
+        **行数范围**: 约 200-400 行
+        --
+        **配置函数**:
+        - func WithUnaryInterceptor(f UnaryClientInterceptor) (行 ~200)
+        - func WithStreamInterceptor(f StreamClientInterceptor) (行 ~250)
+        - func WithChainUnaryInterceptor(interceptors) (行 ~300)
+        - func WithChainStreamInterceptor(interceptors) (行 ~350)
+        --
+        note: 文件: dialoptions.go\n客户端拦截器配置选项
+    }
+    
+    RECTANGLE ServerOptions {
+        **文件位置**: server.go
+        **行数范围**: 约 100-300 行
+        --
+        **配置函数**:
+        - func WithUnaryInterceptor(i UnaryServerInterceptor) (行 ~100)
+        - func WithStreamInterceptor(i StreamServerInterceptor) (行 ~150)
+        - func WithChainUnaryInterceptor(interceptors) (行 ~200)
+        - func WithChainStreamInterceptor(interceptors) (行 ~250)
+        --
+        note: 文件: server.go\n服务端拦截器配置选项
+    }
+}
+
+package "流拦截器包装 (Stream Interceptor Wrappers)" {
+    RECTANGLE WrappedClientStream {
+        **文件位置**: stream.go
+        **行数范围**: 约 300-500 行
+        --
+        **结构体定义**:
+        - type clientStream struct (行 ~300)
+        - ClientStream (嵌入)
+        - 拦截器相关字段
+        --
+        **包装方法**:
+        - SendMsg() (行 ~400)
+        - RecvMsg() (行 ~450)
+        --
+        note: 文件: stream.go\n包装的客户端流实现
+    }
+    
+    RECTANGLE WrappedServerStream {
+        **文件位置**: stream.go
+        **行数范围**: 约 600-800 行
+        --
+        **结构体定义**:
+        - type serverStream struct (行 ~600)
+        - ServerStream (嵌入)
+        - 拦截器相关字段
+        --
+        **包装方法**:
+        - SendMsg() (行 ~700)
+        - RecvMsg() (行 ~750)
+        --
+        note: 包装的服务端流实现
+    }
+}
+
+package "示例拦截器 (Example Interceptors)" {
+    RECTANGLE LoggingInterceptor {
+        **文件位置**: examples/features/interceptor/client/main.go
+        **行数范围**: 约 50-150 行
+        --
+        **示例实现**:
+        - func loggingUnaryInterceptor() (行 ~50)
+        - func loggingStreamInterceptor() (行 ~100)
+        --
+        note: 文件: examples/features/interceptor/\n日志拦截器示例
+    }
+    
+    RECTANGLE AuthInterceptor {
+        **文件位置**: examples/features/authentication/client/main.go
+        **行数范围**: 约 50-150 行
+        --
+        **示例实现**:
+        - func authUnaryInterceptor() (行 ~50)
+        - func authStreamInterceptor() (行 ~100)
+        --
+        note: 认证拦截器示例
+    }
+    
+    RECTANGLE MetricsInterceptor {
+        **文件位置**: 第三方库或用户实现
+        --
+        **常见实现**:
+        - Prometheus 指标收集
+        - OpenTelemetry 集成
+        - 自定义指标
+        --
+        note: 指标收集拦截器\n通常由第三方库提供
+    }
+    
+    RECTANGLE RetryInterceptor {
+        **文件位置**: 第三方库实现
+        --
+        **常见库**:
+        - grpc-go-middleware
+        - go-grpc-middleware
+        - 自定义重试逻辑
+        --
+        note: 重试拦截器\n通常由第三方库提供
+    }
+}
+
+' 定义关系和文件依赖
+ClientInterceptorChain --> UnaryClientInterceptor : 管理 (跨文件)
+ClientInterceptorChain --> StreamClientInterceptor : 管理 (跨文件)
+ServerInterceptorChain --> UnaryServerInterceptor : 管理 (跨文件)
+ServerInterceptorChain --> StreamServerInterceptor : 管理 (跨文件)
+
+ChainUnaryClient --> UnaryClientInterceptor : 链接 (同文件)
+ChainStreamClient --> StreamClientInterceptor : 链接 (同文件)
+ChainUnaryServer --> UnaryServerInterceptor : 链接 (同文件)
+ChainStreamServer --> StreamServerInterceptor : 链接 (同文件)
+
+ClientOptions --> UnaryClientInterceptor : 配置 (跨文件)
+ServerOptions --> UnaryServerInterceptor : 配置 (跨文件)
+
+WrappedClientStream --> StreamClientInterceptor : 应用 (跨文件)
+WrappedServerStream --> StreamServerInterceptor : 应用 (跨文件)
+
+' 文件结构注释
+note top of UnaryClientInterceptor
+  **拦截器相关文件**:
+  ├── interceptor.go (类型定义)
+  ├── clientconn.go (客户端链实现)
+  ├── server.go (服务端链实现)
+  ├── dialoptions.go (客户端配置)
+  ├── stream.go (流包装)
+  └── examples/features/interceptor/ (示例)
+end note
+
+note bottom of ClientInterceptorChain
+  **客户端拦截器执行流程**:
+  1. 配置拦截器 (WithUnaryInterceptor)
+  2. 构建拦截器链 (chainUnaryClientInterceptors)
+  3. RPC 调用时执行链 (Invoke)
+  4. 递归调用下一个拦截器
+  5. 最终调用实际的 RPC
+end note
+
+note right of ServerInterceptorChain
+  **服务端拦截器执行流程**:
+  1. 配置拦截器 (WithUnaryInterceptor)
+  2. 构建拦截器链 (chainUnaryServerInterceptors)
+  3. 请求处理时执行链 (processUnaryRPC)
+  4. 递归调用下一个拦截器
+  5. 最终调用业务处理器
+end note
+
+note left of WrappedClientStream
+  **流拦截器特点**:
+  - 包装原始流对象
+  - 拦截 SendMsg/RecvMsg 调用
+  - 支持双向流
+  - 异步处理支持
+  - 状态管理
+end note
+
+' 拦截器链执行模式注释
+note as N1
+  **拦截器链执行模式**:
+  
+  **递归调用模式**:
+  ```go
+  func chainInterceptors(interceptors, handler) {
+      if len(interceptors) == 0 {
+          return handler
+      }
+      return interceptors[0](
+          chainInterceptors(interceptors[1:], handler)
+      )
+  }
+  ```
+  
+  **执行顺序**:
+  拦截器1(前) → 拦截器2(前) → 业务逻辑 → 
+  拦截器2(后) → 拦截器1(后)
+end note
+
+@enduml

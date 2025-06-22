@@ -1,0 +1,377 @@
+@startuml 状态码和错误处理代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 状态码和错误处理 (Status & Error Handling) 代码实现位置
+
+' 定义颜色主题
+!define STATUS_COLOR #E8F5E8
+!define CODES_COLOR #FFF3E0
+!define ERROR_COLOR #F3E5F5
+!define DETAILS_COLOR #E3F2FD
+
+package "状态码核心 (Status Codes Core)" STATUS_COLOR {
+    RECTANGLE Status {
+        **文件位置**: status/status.go
+        **行数范围**: 约 50-300 行
+        --
+        **结构体定义**:
+        - type Status struct (行 ~50)
+        - s *spb.Status
+        --
+        **主要函数**:
+        - func New(c codes.Code, msg string) *Status (行 ~100)
+        - func Newf(c codes.Code, format string, a ...any) *Status (行 ~120)
+        - func Error(c codes.Code, msg string) error (行 ~150)
+        - func Errorf(c codes.Code, format string, a ...any) error (行 ~170)
+        - func FromError(err error) (*Status, bool) (行 ~200)
+        - func (s *Status) WithDetails(details ...proto.Message) (*Status, error) (行 ~250)
+        --
+        note: 文件: status/status.go\ngRPC 状态结构核心实现
+    }
+    
+    RECTANGLE StatusProto {
+        **文件位置**: status/status.proto (生成 status.pb.go)
+        **行数范围**: 约 50-150 行
+        --
+        **Protocol Buffer 定义**:
+        - message Status (行 ~50)
+        - int32 code = 1
+        - string message = 2
+        - repeated google.protobuf.Any details = 3
+        --
+        note: 文件: status/status.pb.go\n状态的 Protocol Buffer 表示
+    }
+    
+    RECTANGLE StatusConversion {
+        **文件位置**: status/status.go
+        **行数范围**: 约 350-450 行
+        --
+        **转换函数**:
+        - func (s *Status) Proto() *spb.Status (行 ~350)
+        - func (s *Status) Err() error (行 ~380)
+        - func FromProto(s *spb.Status) *Status (行 ~420)
+        --
+        note: 状态转换函数
+    }
+}
+
+package "状态码定义 (Status Codes)" CODES_COLOR {
+    RECTANGLE CodesDefinition {
+        **文件位置**: codes/codes.go
+        **行数范围**: 约 50-200 行
+        --
+        **枚举定义**:
+        - type Code uint32 (行 ~50)
+        - const OK Code = 0 (行 ~80)
+        - const Cancelled Code = 1 (行 ~90)
+        - const Unknown Code = 2 (行 ~100)
+        - const InvalidArgument Code = 3 (行 ~110)
+        - ... (其他状态码定义)
+        --
+        note: 文件: codes/codes.go\ngRPC 标准状态码定义
+    }
+    
+    RECTANGLE CodeMethods {
+        **文件位置**: codes/codes.go
+        **行数范围**: 约 250-350 行
+        --
+        **方法实现**:
+        - func (c Code) String() string (行 ~250)
+        - func (c Code) GoString() string (行 ~280)
+        --
+        note: 状态码方法实现
+    }
+    
+    RECTANGLE CodeMapping {
+        **文件位置**: internal/status/status.go
+        **行数范围**: 约 50-150 行
+        --
+        **映射函数**:
+        - func HTTPStatusFromCode(code codes.Code) int (行 ~50)
+        - func CodeFromHTTPStatus(httpStatus int) codes.Code (行 ~100)
+        --
+        note: 文件: internal/status/status.go\n状态码映射函数
+    }
+}
+
+package "错误详情 (Error Details)" DETAILS_COLOR {
+    RECTANGLE ErrorDetails {
+        **文件位置**: google.golang.org/genproto/googleapis/rpc/errdetails
+        **行数范围**: 各种 .pb.go 文件
+        --
+        **标准错误详情类型**:
+        - BadRequest (errdetails/error_details.pb.go)
+        - RetryInfo (errdetails/error_details.pb.go)
+        - DebugInfo (errdetails/error_details.pb.go)
+        - QuotaFailure (errdetails/error_details.pb.go)
+        - ErrorInfo (errdetails/error_details.pb.go)
+        --
+        note: 外部包: google.golang.org/genproto\n标准错误详情类型定义
+    }
+    
+    RECTANGLE DetailsHandling {
+        **文件位置**: status/status.go
+        **行数范围**: 约 500-600 行
+        --
+        **详情处理函数**:
+        - func (s *Status) Details() []any (行 ~500)
+        - func (s *Status) WithDetails(details ...proto.Message) (行 ~550)
+        --
+        note: 文件: status/status.go\n错误详情处理函数
+    }
+}
+
+package "错误处理 (Error Handling)" ERROR_COLOR {
+    RECTANGLE ErrorConversion {
+        **文件位置**: status/status.go
+        **行数范围**: 约 650-750 行
+        --
+        **错误转换函数**:
+        - func FromError(err error) (*Status, bool) (行 ~650)
+        - func Convert(err error) *Status (行 ~700)
+        --
+        note: 文件: status/status.go\n错误转换函数
+    }
+    
+    RECTANGLE ErrorPropagation {
+        **文件位置**: internal/transport/http2_client.go, http2_server.go
+        **行数范围**: 约 1000-1200 行
+        --
+        **错误传播相关**:
+        - func (t *http2Client) operateHeaders() 中的状态处理 (行 ~1000)
+        - func (t *http2Server) writeStatus() 中的状态发送 (行 ~1100)
+        --
+        note: 传输层错误传播实现
+    }
+    
+    RECTANGLE ClientErrorHandling {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 1500-1700 行
+        --
+        **客户端错误处理**:
+        - func (cc *ClientConn) Invoke() 中的错误处理 (行 ~1500)
+        - func (cs *clientStream) finish() 中的状态提取 (行 ~1600)
+        --
+        note: 文件: clientconn.go\n客户端错误处理逻辑
+    }
+    
+    RECTANGLE ServerErrorHandling {
+        **文件位置**: server.go
+        **行数范围**: 约 1800-2000 行
+        --
+        **服务端错误处理**:
+        - func (s *Server) processUnaryRPC() 中的错误处理 (行 ~1800)
+        - func (s *Server) sendResponse() 中的状态发送 (行 ~1900)
+        --
+        note: 文件: server.go\n服务端错误处理逻辑
+    }
+}
+
+package "流错误处理 (Stream Error Handling)" {
+    RECTANGLE ClientStreamError {
+        **文件位置**: stream.go
+        **行数范围**: 约 200-400 行
+        --
+        **客户端流错误处理**:
+        - func (cs *clientStream) RecvMsg() 中的错误处理 (行 ~200)
+        - func (cs *clientStream) finish() 中的状态提取 (行 ~300)
+        --
+        note: 文件: stream.go\n客户端流错误处理
+    }
+    
+    RECTANGLE ServerStreamError {
+        **文件位置**: stream.go
+        **行数范围**: 约 500-700 行
+        --
+        **服务端流错误处理**:
+        - func (ss *serverStream) SendMsg() 中的错误处理 (行 ~500)
+        - func (ss *serverStream) RecvMsg() 中的错误处理 (行 ~600)
+        --
+        note: 服务端流错误处理
+    }
+}
+
+package "拦截器错误处理 (Interceptor Error Handling)" {
+    RECTANGLE ErrorInterceptor {
+        **文件位置**: examples/features/errors/client/main.go
+        **行数范围**: 约 50-150 行
+        --
+        **示例实现**:
+        - func errorUnaryInterceptor() (行 ~50)
+        - func errorStreamInterceptor() (行 ~100)
+        --
+        note: 文件: examples/features/errors/\n错误处理拦截器示例
+    }
+    
+    RECTANGLE ErrorRecovery {
+        **文件位置**: 第三方库或用户实现
+        --
+        **常见实现**:
+        - Panic 恢复
+        - 错误重试
+        - 降级处理
+        - 错误转换
+        --
+        note: 错误恢复机制\n通常由用户或第三方库实现
+    }
+}
+
+package "错误监控 (Error Monitoring)" {
+    RECTANGLE ErrorMetrics {
+        **文件位置**: 第三方库实现
+        --
+        **常见库**:
+        - Prometheus 指标
+        - OpenTelemetry
+        - 自定义指标收集
+        --
+        note: 错误指标收集\n通常由第三方库提供
+    }
+    
+    RECTANGLE ErrorLogging {
+        **文件位置**: internal/grpclog/grpclog.go
+        **行数范围**: 约 50-200 行
+        --
+        **日志相关**:
+        - func Error(args ...any) (行 ~50)
+        - func Errorf(format string, args ...any) (行 ~80)
+        - func ErrorDepth(depth int, args ...any) (行 ~120)
+        --
+        note: 文件: internal/grpclog/grpclog.go\ngRPC 内部日志记录
+    }
+    
+    RECTANGLE ErrorAlerting {
+        **文件位置**: 用户应用或第三方库
+        --
+        **常见实现**:
+        - 错误率监控
+        - 阈值告警
+        - 错误聚合
+        - 通知机制
+        --
+        note: 错误告警机制\n通常在应用层实现
+    }
+}
+
+package "特殊错误处理 (Special Error Handling)" {
+    RECTANGLE TimeoutError {
+        **文件位置**: context 包和 gRPC 内部处理
+        --
+        **超时错误处理**:
+        - context.DeadlineExceeded
+        - codes.DeadlineExceeded
+        - 超时检测和转换
+        --
+        note: 超时错误特殊处理
+    }
+    
+    RECTANGLE CancellationError {
+        **文件位置**: context 包和 gRPC 内部处理
+        --
+        **取消错误处理**:
+        - context.Canceled
+        - codes.Cancelled
+        - 取消信号传播
+        --
+        note: 取消错误特殊处理
+    }
+    
+    RECTANGLE NetworkError {
+        **文件位置**: internal/transport/ 包
+        --
+        **网络错误处理**:
+        - 连接错误
+        - 传输错误
+        - 协议错误
+        - 错误码映射
+        --
+        note: 网络层错误处理
+    }
+}
+
+' 定义关系和文件依赖
+Status --> StatusProto : 包含 (跨文件)
+Status --> CodesDefinition : 使用 (跨包)
+Status --> ErrorDetails : 包含详情 (外部包)
+
+ErrorConversion --> Status : 创建 (同文件)
+ClientErrorHandling --> Status : 处理 (跨文件)
+ServerErrorHandling --> Status : 发送 (跨文件)
+
+ClientStreamError --> Status : 提取 (跨文件)
+ServerStreamError --> Status : 处理 (跨文件)
+
+ErrorPropagation --> Status : 传播 (跨文件)
+
+' 文件结构注释
+note top of Status
+  **状态码相关文件**:
+  ├── status/status.go (核心实现)
+  ├── codes/codes.go (状态码定义)
+  ├── internal/status/status.go (内部工具)
+  └── google.golang.org/genproto/googleapis/rpc/errdetails (错误详情)
+end note
+
+note bottom of CodesDefinition
+  **状态码分类**:
+  - 0: 成功 (OK)
+  - 1-2: 取消和未知
+  - 3-11: 客户端错误
+  - 12-16: 服务端错误
+  - 基于 HTTP 状态码设计
+end note
+
+note right of ErrorDetails
+  **错误详情使用**:
+  - 提供结构化错误信息
+  - 支持多语言错误消息
+  - 包含重试指导信息
+  - 提供调试信息
+  - 支持自定义错误类型
+end note
+
+note left of ErrorPropagation
+  **错误传播路径**:
+  1. 业务逻辑产生错误
+  2. 转换为 gRPC 状态
+  3. 传输层编码发送
+  4. 客户端接收解码
+  5. 转换为 Go 错误
+  6. 返回给调用者
+end note
+
+' 错误处理流程注释
+note as N1
+  **错误处理流程**:
+  
+  **服务端错误创建**:
+  ```go
+  st := status.New(codes.InvalidArgument, "invalid input")
+  st, _ = st.WithDetails(&errdetails.BadRequest{...})
+  return st.Err()
+  ```
+  
+  **客户端错误处理**:
+  ```go
+  if st, ok := status.FromError(err); ok {
+      switch st.Code() {
+      case codes.InvalidArgument:
+          // 处理参数错误
+      case codes.NotFound:
+          // 处理未找到错误
+      }
+  }
+  ```
+  
+  **错误详情提取**:
+  ```go
+  for _, detail := range st.Details() {
+      if badReq, ok := detail.(*errdetails.BadRequest); ok {
+          // 处理验证错误详情
+      }
+  }
+  ```
+end note
+
+@enduml

@@ -1,0 +1,276 @@
+@startuml 客户端连接管理代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 客户端连接管理 (ClientConn) 代码实现位置
+
+' 定义颜色主题
+!define CLIENT_COLOR #E3F2FD
+!define RESOLVER_COLOR #F3E5F5
+!define BALANCER_COLOR #E8F5E8
+!define TRANSPORT_COLOR #FFF3E0
+
+package "客户端连接核心 (ClientConn Core)" CLIENT_COLOR {
+    RECTANGLE ClientConn {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 100-800 行
+        --
+        **关键结构体**:
+        - type ClientConn struct (行 ~150)
+        - target string
+        - resolverWrapper *ccResolverWrapper
+        - balancerWrapper *ccBalancerWrapper
+        - conns map[*addrConn]struct{}
+        --
+        **主要方法**:
+        - NewClient() (行 ~200)
+        - Invoke() (行 ~400)
+        - NewStream() (行 ~450)
+        - Close() (行 ~700)
+        --
+        note: 文件: clientconn.go\n主要实现客户端连接管理逻辑
+    }
+    
+    RECTANGLE DialOptions {
+        **文件位置**: dialoptions.go
+        **行数范围**: 约 50-600 行
+        --
+        **关键函数**:
+        - WithTransportCredentials() (行 ~100)
+        - WithUnaryInterceptor() (行 ~150)
+        - WithStreamInterceptor() (行 ~200)
+        - WithKeepaliveParams() (行 ~300)
+        --
+        note: 文件: dialoptions.go\n定义所有客户端配置选项
+    }
+    
+    RECTANGLE dialOptions {
+        **文件位置**: dialoptions.go
+        **行数范围**: 约 30-80 行
+        --
+        **结构体定义**:
+        - type dialOptions struct (行 ~30)
+        - creds credentials.TransportCredentials
+        - unaryInt UnaryClientInterceptor
+        - streamInt StreamClientInterceptor
+        --
+        note: 内部配置结构体
+    }
+}
+
+package "服务发现包装器 (Resolver Wrapper)" RESOLVER_COLOR {
+    RECTANGLE ccResolverWrapper {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 900-1200 行
+        --
+        **结构体定义**:
+        - type ccResolverWrapper struct (行 ~900)
+        - cc *ClientConn
+        - resolver resolver.Resolver
+        - done *grpcsync.Event
+        --
+        **主要方法**:
+        - start() (行 ~950)
+        - close() (行 ~1000)
+        - UpdateState() (行 ~1050)
+        --
+        note: 文件: clientconn.go\n解析器包装器实现
+    }
+    
+    RECTANGLE ResolverInterface {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 100-150 行
+        --
+        **接口定义**:
+        - type Resolver interface (行 ~100)
+        - ResolveNow(ResolveNowOptions)
+        - Close()
+        --
+        note: 文件: resolver/resolver.go\n服务发现核心接口
+    }
+    
+    RECTANGLE ResolverClientConn {
+        **文件位置**: resolver/resolver.go
+        **行数范围**: 约 200-250 行
+        --
+        **接口定义**:
+        - type ClientConn interface (行 ~200)
+        - UpdateState(State) error
+        - ReportError(error)
+        --
+        note: 解析器回调接口定义
+    }
+}
+
+package "负载均衡包装器 (Balancer Wrapper)" BALANCER_COLOR {
+    RECTANGLE ccBalancerWrapper {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 1300-1600 行
+        --
+        **结构体定义**:
+        - type ccBalancerWrapper struct (行 ~1300)
+        - cc *ClientConn
+        - balancer balancer.Balancer
+        - stateChangeQueue *grpcsync.CallbackSerializer
+        --
+        **主要方法**:
+        - start() (行 ~1350)
+        - updateClientConnState() (行 ~1400)
+        - updateSubConnState() (行 ~1450)
+        --
+        note: 文件: clientconn.go\n负载均衡器包装器实现
+    }
+    
+    RECTANGLE BalancerInterface {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 100-200 行
+        --
+        **接口定义**:
+        - type Balancer interface (行 ~100)
+        - UpdateClientConnState(ClientConnState) error
+        - UpdateSubConnState(SubConn, SubConnState)
+        --
+        note: 文件: balancer/balancer.go\n负载均衡器核心接口
+    }
+    
+    RECTANGLE BalancerClientConn {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 300-400 行
+        --
+        **接口定义**:
+        - type ClientConn interface (行 ~300)
+        - NewSubConn([]resolver.Address, NewSubConnOptions)
+        - RemoveSubConn(SubConn)
+        --
+        note: 负载均衡器回调接口
+    }
+}
+
+package "地址连接管理 (Address Connection)" TRANSPORT_COLOR {
+    RECTANGLE addrConn {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 1700-2200 行
+        --
+        **结构体定义**:
+        - type addrConn struct (行 ~1700)
+        - cc *ClientConn
+        - dopts dialOptions
+        - transport transport.ClientTransport
+        --
+        **主要方法**:
+        - connect() (行 ~1800)
+        - tryAllAddrs() (行 ~1900)
+        - createTransport() (行 ~2000)
+        --
+        note: 文件: clientconn.go\n地址连接管理实现
+    }
+    
+    RECTANGLE acBalancerWrapper {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 2300-2400 行
+        --
+        **结构体定义**:
+        - type acBalancerWrapper struct (行 ~2300)
+        - ac *addrConn
+        - stateListener func(SubConnState)
+        --
+        note: 地址连接的负载均衡包装器
+    }
+    
+    RECTANGLE ClientTransport {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 50-150 行
+        --
+        **接口定义**:
+        - type ClientTransport interface (行 ~50)
+        - NewStream(context.Context, *CallHdr)
+        - Close(error)
+        - GracefulClose()
+        --
+        note: 文件: internal/transport/transport.go\n客户端传输接口定义
+    }
+}
+
+package "连接状态管理 (Connectivity State)" {
+    RECTANGLE ConnectivityState {
+        **文件位置**: connectivity/connectivity.go
+        **行数范围**: 约 30-80 行
+        --
+        **枚举定义**:
+        - type State int (行 ~30)
+        - Idle State = iota
+        - Connecting
+        - Ready
+        - TransientFailure
+        - Shutdown
+        --
+        note: 文件: connectivity/connectivity.go\n连接状态枚举定义
+    }
+    
+    RECTANGLE StateNotifier {
+        **文件位置**: clientconn.go
+        **行数范围**: 约 2500-2600 行
+        --
+        **相关方法**:
+        - updateConnectivityState() (行 ~2500)
+        - waitForStateChange() (行 ~2550)
+        --
+        note: 状态变化通知实现
+    }
+}
+
+' 定义关系和文件依赖
+ClientConn --> ccResolverWrapper : 包含 (同文件)
+ClientConn --> ccBalancerWrapper : 包含 (同文件)
+ClientConn --> addrConn : 管理 (同文件)
+ClientConn --> DialOptions : 使用 (跨文件)
+
+ccResolverWrapper --> ResolverInterface : 实现 (跨包)
+ccBalancerWrapper --> BalancerInterface : 实现 (跨包)
+addrConn --> ClientTransport : 使用 (跨包)
+
+' 文件结构注释
+note top of ClientConn
+  **主要文件结构**:
+  clientconn.go (约 2600+ 行)
+  ├── ClientConn 结构体和方法
+  ├── ccResolverWrapper 实现
+  ├── ccBalancerWrapper 实现
+  ├── addrConn 实现
+  └── 状态管理相关方法
+end note
+
+note bottom of ResolverInterface
+  **resolver 包结构**:
+  resolver/
+  ├── resolver.go (核心接口)
+  ├── dns/
+  │   └── dns_resolver.go
+  ├── manual/
+  │   └── manual.go
+  └── xds/
+      └── xds.go
+end note
+
+note right of BalancerInterface
+  **balancer 包结构**:
+  balancer/
+  ├── balancer.go (核心接口)
+  ├── pickfirst/
+  │   └── pickfirst.go
+  ├── roundrobin/
+  │   └── roundrobin.go
+  └── weightedroundrobin/
+      └── weightedroundrobin.go
+end note
+
+note left of ClientTransport
+  **transport 包结构**:
+  internal/transport/
+  ├── transport.go (接口定义)
+  ├── http2_client.go (HTTP/2 客户端)
+  ├── http2_server.go (HTTP/2 服务端)
+  └── controlbuf.go (控制缓冲区)
+end note
+
+@enduml

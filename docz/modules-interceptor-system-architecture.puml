@@ -1,0 +1,328 @@
+@startuml 拦截器机制架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 拦截器机制 (Interceptor System) 架构设计
+
+' 定义颜色主题
+!define INTERCEPTOR_COLOR #E8F5E8
+!define CLIENT_COLOR #FFF3E0
+!define SERVER_COLOR #F3E5F5
+!define CHAIN_COLOR #E3F2FD
+!define STREAM_COLOR #FCE4EC
+
+package "拦截器核心接口 (Core Interfaces)" INTERCEPTOR_COLOR {
+    interface "grpc.UnaryClientInterceptor" as UnaryClientInterceptor {
+        + (ctx context.Context, method string, req, reply any, cc *ClientConn, invoker UnaryInvoker, opts ...CallOption): error
+        --
+        note: 一元客户端拦截器接口\n拦截客户端一元 RPC 调用
+    }
+    
+    interface "grpc.StreamClientInterceptor" as StreamClientInterceptor {
+        + (ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, streamer Streamer, opts ...CallOption): (ClientStream, error)
+        --
+        note: 流客户端拦截器接口\n拦截客户端流 RPC 调用
+    }
+    
+    interface "grpc.UnaryServerInterceptor" as UnaryServerInterceptor {
+        + (ctx context.Context, req any, info *UnaryServerInfo, handler UnaryHandler): (resp any, err error)
+        --
+        note: 一元服务端拦截器接口\n拦截服务端一元 RPC 处理
+    }
+    
+    interface "grpc.StreamServerInterceptor" as StreamServerInterceptor {
+        + (srv any, ss ServerStream, info *StreamServerInfo, handler StreamHandler): error
+        --
+        note: 流服务端拦截器接口\n拦截服务端流 RPC 处理
+    }
+}
+
+package "客户端拦截器 (Client Interceptors)" CLIENT_COLOR {
+    RECTANGLE UnaryInvoker {
+        --
+        + (ctx context.Context, method string, req, reply any, cc *ClientConn, opts ...CallOption): error
+        --
+        note: 一元调用器\n执行实际的 RPC 调用
+    }
+    
+    RECTANGLE Streamer {
+        --
+        + (ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, opts ...CallOption): (ClientStream, error)
+        --
+        note: 流创建器\n创建客户端流
+    }
+    
+    RECTANGLE ClientInterceptorChain {
+        - unaryInterceptors: []UnaryClientInterceptor
+        - streamInterceptors: []StreamClientInterceptor
+        --
+        + chainUnaryClient(interceptors): UnaryClientInterceptor
+        + chainStreamClient(interceptors): StreamClientInterceptor
+        + invokeUnary(ctx, method, req, reply, cc, opts): error
+        + invokeStream(ctx, desc, cc, method, opts): (ClientStream, error)
+        --
+        note: 客户端拦截器链\n管理拦截器的执行顺序
+    }
+    
+    RECTANGLE ClientCallOptions {
+        - header: *metadata.MD
+        - trailer: *metadata.MD
+        - peer: *peer.Peer
+        - failFast: bool
+        - maxReceiveMessageSize: int
+        - maxSendMessageSize: int
+        - compressor: string
+        - contentSubtype: string
+        --
+        note: 客户端调用选项\n配置 RPC 调用参数
+    }
+}
+
+package "服务端拦截器 (Server Interceptors)" SERVER_COLOR {
+    RECTANGLE UnaryHandler {
+        --
+        + (ctx context.Context, req any): (any, error)
+        --
+        note: 一元处理器\n执行实际的业务逻辑
+    }
+    
+    RECTANGLE StreamHandler {
+        --
+        + (srv any, stream ServerStream): error
+        --
+        note: 流处理器\n处理流式 RPC
+    }
+    
+    RECTANGLE UnaryServerInfo {
+        + Server: any
+        + FullMethod: string
+        --
+        note: 一元服务信息\n包含服务实例和方法名
+    }
+    
+    RECTANGLE StreamServerInfo {
+        + FullMethod: string
+        + IsClientStream: bool
+        + IsServerStream: bool
+        --
+        note: 流服务信息\n包含流类型和方法名
+    }
+    
+    RECTANGLE ServerInterceptorChain {
+        - unaryInterceptors: []UnaryServerInterceptor
+        - streamInterceptors: []StreamServerInterceptor
+        --
+        + chainUnaryServer(interceptors): UnaryServerInterceptor
+        + chainStreamServer(interceptors): StreamServerInterceptor
+        + handleUnary(ctx, req, info, handler): (any, error)
+        + handleStream(srv, ss, info, handler): error
+        --
+        note: 服务端拦截器链\n管理拦截器的执行顺序
+    }
+}
+
+package "拦截器链管理 (Chain Management)" CHAIN_COLOR {
+    RECTANGLE InterceptorBuilder {
+        --
+        + BuildUnaryClientChain(interceptors): UnaryClientInterceptor
+        + BuildStreamClientChain(interceptors): StreamClientInterceptor
+        + BuildUnaryServerChain(interceptors): UnaryServerInterceptor
+        + BuildStreamServerChain(interceptors): StreamServerInterceptor
+        --
+        note: 拦截器链构建器\n构建拦截器执行链
+    }
+    
+    RECTANGLE ChainContext {
+        - index: int
+        - interceptors: []any
+        - finalHandler: any
+        --
+        + Next(ctx, req): (any, error)
+        + Skip(): bool
+        + Abort(err): error
+        --
+        note: 链执行上下文\n管理链的执行状态
+    }
+    
+    RECTANGLE InterceptorRegistry {
+        - globalUnaryClient: []UnaryClientInterceptor
+        - globalStreamClient: []StreamClientInterceptor
+        - globalUnaryServer: []UnaryServerInterceptor
+        - globalStreamServer: []StreamServerInterceptor
+        --
+        + RegisterGlobalUnaryClient(interceptor)
+        + RegisterGlobalStreamClient(interceptor)
+        + RegisterGlobalUnaryServer(interceptor)
+        + RegisterGlobalStreamServer(interceptor)
+        + GetGlobalInterceptors(): []any
+        --
+        note: 拦截器注册表\n管理全局拦截器
+    }
+}
+
+package "流拦截器包装 (Stream Interceptor Wrappers)" STREAM_COLOR {
+    RECTANGLE WrappedClientStream {
+        + ClientStream
+        - interceptor: StreamClientInterceptor
+        - ctx: context.Context
+        --
+        + SendMsg(m any): error
+        + RecvMsg(m any): error
+        + Header(): (metadata.MD, error)
+        + Trailer(): metadata.MD
+        + CloseSend(): error
+        + Context(): context.Context
+        --
+        note: 包装的客户端流\n在流操作中应用拦截器
+    }
+    
+    RECTANGLE WrappedServerStream {
+        + ServerStream
+        - interceptor: StreamServerInterceptor
+        - ctx: context.Context
+        --
+        + SetHeader(md metadata.MD): error
+        + SendHeader(md metadata.MD): error
+        + SetTrailer(md metadata.MD)
+        + Context(): context.Context
+        + SendMsg(m any): error
+        + RecvMsg(m any): error
+        --
+        note: 包装的服务端流\n在流操作中应用拦截器
+    }
+    
+    RECTANGLE StreamInterceptorWrapper {
+        --
+        + WrapClientStream(stream, interceptor): ClientStream
+        + WrapServerStream(stream, interceptor): ServerStream
+        + ApplyClientInterceptors(stream, interceptors): ClientStream
+        + ApplyServerInterceptors(stream, interceptors): ServerStream
+        --
+        note: 流拦截器包装器\n为流应用拦截器
+    }
+}
+
+package "常用拦截器实现 (Common Interceptor Implementations)" {
+    RECTANGLE LoggingInterceptor {
+        --
+        + UnaryClientInterceptor(): UnaryClientInterceptor
+        + UnaryServerInterceptor(): UnaryServerInterceptor
+        + logRequest(method, req)
+        + logResponse(method, resp, err)
+        --
+        note: 日志拦截器\n记录请求和响应日志
+    }
+    
+    RECTANGLE AuthInterceptor {
+        --
+        + UnaryClientInterceptor(): UnaryClientInterceptor
+        + UnaryServerInterceptor(): UnaryServerInterceptor
+        + addAuthToken(ctx): context.Context
+        + validateAuth(ctx): error
+        --
+        note: 认证拦截器\n处理认证逻辑
+    }
+    
+    RECTANGLE MetricsInterceptor {
+        --
+        + UnaryClientInterceptor(): UnaryClientInterceptor
+        + UnaryServerInterceptor(): UnaryServerInterceptor
+        + recordMetrics(method, duration, err)
+        + incrementCounter(method)
+        --
+        note: 指标拦截器\n收集性能指标
+    }
+    
+    RECTANGLE RetryInterceptor {
+        - maxRetries: int
+        - backoff: BackoffStrategy
+        --
+        + UnaryClientInterceptor(): UnaryClientInterceptor
+        + shouldRetry(err): bool
+        + calculateBackoff(attempt): time.Duration
+        --
+        note: 重试拦截器\n实现自动重试逻辑
+    }
+}
+
+' 定义关系
+ClientInterceptorChain --> UnaryClientInterceptor : 管理
+ClientInterceptorChain --> StreamClientInterceptor : 管理
+ClientInterceptorChain --> UnaryInvoker : 调用
+ClientInterceptorChain --> Streamer : 调用
+
+ServerInterceptorChain --> UnaryServerInterceptor : 管理
+ServerInterceptorChain --> StreamServerInterceptor : 管理
+ServerInterceptorChain --> UnaryHandler : 调用
+ServerInterceptorChain --> StreamHandler : 调用
+
+InterceptorBuilder --> ClientInterceptorChain : 构建
+InterceptorBuilder --> ServerInterceptorChain : 构建
+ChainContext --> InterceptorBuilder : 使用
+InterceptorRegistry --> InterceptorBuilder : 提供拦截器
+
+WrappedClientStream --> StreamClientInterceptor : 应用
+WrappedServerStream --> StreamServerInterceptor : 应用
+StreamInterceptorWrapper --> WrappedClientStream : 创建
+StreamInterceptorWrapper --> WrappedServerStream : 创建
+
+LoggingInterceptor ..|> UnaryClientInterceptor : 实现
+LoggingInterceptor ..|> UnaryServerInterceptor : 实现
+AuthInterceptor ..|> UnaryClientInterceptor : 实现
+AuthInterceptor ..|> UnaryServerInterceptor : 实现
+MetricsInterceptor ..|> UnaryClientInterceptor : 实现
+MetricsInterceptor ..|> UnaryServerInterceptor : 实现
+RetryInterceptor ..|> UnaryClientInterceptor : 实现
+
+' 注释说明
+note top of UnaryClientInterceptor
+  **客户端拦截器执行流程：**
+  1. 接收 RPC 调用参数
+  2. 执行预处理逻辑
+  3. 调用下一个拦截器或实际 RPC
+  4. 执行后处理逻辑
+  5. 返回结果或错误
+end note
+
+note bottom of UnaryServerInterceptor
+  **服务端拦截器执行流程：**
+  1. 接收 RPC 请求
+  2. 执行预处理逻辑
+  3. 调用下一个拦截器或业务处理器
+  4. 执行后处理逻辑
+  5. 返回响应或错误
+end note
+
+note right of ClientInterceptorChain
+  **拦截器链特点：**
+  - 支持多个拦截器
+  - 按顺序执行
+  - 支持短路执行
+  - 异常处理和恢复
+  - 上下文传递
+end note
+
+note left of StreamInterceptorWrapper
+  **流拦截器特点：**
+  - 包装原始流对象
+  - 拦截流操作方法
+  - 支持双向流
+  - 异步处理支持
+  - 状态管理
+end note
+
+' 时序图注释
+note as N1
+  **拦截器执行时序：**
+  请求 → 拦截器1(前) → 拦截器2(前) → 
+  业务逻辑 → 拦截器2(后) → 拦截器1(后) → 响应
+  
+  每个拦截器都有机会：
+  - 修改请求参数
+  - 添加元数据
+  - 记录日志
+  - 处理错误
+  - 修改响应
+end note
+
+@enduml

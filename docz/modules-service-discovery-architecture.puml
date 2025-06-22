@@ -1,0 +1,282 @@
+@startuml 服务发现系统架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 服务发现系统 (Service Discovery) 架构设计
+
+' 定义颜色主题
+!define RESOLVER_COLOR #E8F5E8
+!define DNS_COLOR #FFF3E0
+!define MANUAL_COLOR #F3E5F5
+!define XDS_COLOR #E3F2FD
+!define TARGET_COLOR #FCE4EC
+
+package "服务发现核心接口 (Core Interfaces)" RESOLVER_COLOR {
+    interface "resolver.Builder" as Builder {
+        + Build(target Target, cc ClientConn, opts BuildOptions): (Resolver, error)
+        + Scheme(): string
+        --
+        note: 解析器构建器接口\n用于创建具体的解析器
+    }
+    
+    interface "resolver.Resolver" as Resolver {
+        + ResolveNow(ResolveNowOptions)
+        + Close()
+        --
+        note: 解析器核心接口\n负责服务地址解析
+    }
+    
+    interface "resolver.ClientConn" as ClientConn {
+        + UpdateState(State): error
+        + ReportError(error)
+        + ParseServiceConfig(serviceConfigJSON string): *serviceconfig.ParseResult
+        --
+        note: 客户端连接接口\n提供给解析器的回调
+    }
+    
+    RECTANGLE Target {
+        + Scheme: string
+        + Authority: string
+        + Endpoint: string
+        + URL: url.URL
+        --
+        note: 目标地址结构\n包含解析所需的所有信息
+    }
+    
+    RECTANGLE State {
+        + Addresses: []Address
+        + ServiceConfig: *serviceconfig.ParseResult
+        + Attributes: *attributes.Attributes
+        --
+        note: 解析器状态\n包含地址列表和服务配置
+    }
+    
+    RECTANGLE Address {
+        + Addr: string
+        + ServerName: string
+        + Attributes: *attributes.Attributes
+        + Metadata: any
+        --
+        note: 服务地址信息\n包含网络地址和元数据
+    }
+}
+
+package "DNS 解析器 (DNS Resolver)" DNS_COLOR {
+    RECTANGLE dnsBuilder {
+        --
+        + Build(target, cc, opts): (Resolver, error)
+        + Scheme(): string
+        --
+        note: DNS 解析器构建器
+    }
+    
+    RECTANGLE dnsResolver {
+        - host: string
+        - port: string
+        - ctx: context.Context
+        - cancel: context.CancelFunc
+        - cc: resolver.ClientConn
+        - rn: chan struct{}
+        - disableServiceConfig: bool
+        - lookupSRV: func(string, string, string): (string, []*net.SRV, error)
+        - lookupTXT: func(string): ([]string, error)
+        - lookupHost: func(string): ([]string, error)
+        --
+        + ResolveNow(opts)
+        + Close()
+        + lookup(): (*resolver.State, error)
+        + lookupSRV(): ([]*net.SRV, error)
+        + lookupHost(): ([]string, error)
+        + lookupTXT(): ([]string, error)
+        --
+        note: DNS 解析器实现\n支持 A/AAAA/SRV/TXT 记录
+    }
+    
+    RECTANGLE dnsWatcher {
+        - resolver: *dnsResolver
+        - freq: time.Duration
+        - timer: *time.Timer
+        --
+        + start()
+        + stop()
+        + schedule()
+        --
+        note: DNS 监控器\n定期重新解析
+    }
+}
+
+package "手动解析器 (Manual Resolver)" MANUAL_COLOR {
+    RECTANGLE manualBuilder {
+        - scheme: string
+        --
+        + Build(target, cc, opts): (Resolver, error)
+        + Scheme(): string
+        --
+        note: 手动解析器构建器
+    }
+    
+    RECTANGLE manualResolver {
+        - BuildCallback: func(Target, ClientConn, BuildOptions)
+        - UpdateStateCallback: func(error)
+        - ResolveNowCallback: func(ResolveNowOptions)
+        - CloseCallback: func()
+        - scheme: string
+        - mu: sync.Mutex
+        - cc: resolver.ClientConn
+        - lastSeenState: *resolver.State
+        --
+        + Build(target, cc, opts): (Resolver, error)
+        + Scheme(): string
+        + ResolveNow(opts)
+        + Close()
+        + UpdateState(state)
+        + InitialState(state)
+        --
+        note: 手动解析器实现\n支持动态地址更新
+    }
+}
+
+package "xDS 解析器 (xDS Resolver)" XDS_COLOR {
+    RECTANGLE xdsBuilder {
+        --
+        + Build(target, cc, opts): (Resolver, error)
+        + Scheme(): string
+        --
+        note: xDS 解析器构建器
+    }
+    
+    RECTANGLE xdsResolver {
+        - cc: resolver.ClientConn
+        - logger: *grpclog.PrefixLogger
+        - xdsClient: xdsclient.XDSClient
+        - xdsClientClose: func()
+        - channelID: uint64
+        - target: resolver.Target
+        - ldsResourceName: string
+        - ldsWatcher: *ldsWatcher
+        - rdsWatcher: *rdsWatcher
+        - cdsWatcher: *cdsWatcher
+        --
+        + ResolveNow(opts)
+        + Close()
+        + onLDSUpdate(update)
+        + onRDSUpdate(update)
+        + onCDSUpdate(update)
+        + onError(err)
+        --
+        note: xDS 解析器实现\n支持动态服务发现
+    }
+    
+    RECTANGLE xdsClient {
+        - conn: *grpc.ClientConn
+        - stream: xdspb.AggregatedDiscoveryService_StreamAggregatedResourcesClient
+        - watchMap: map[string]*watchInfo
+        --
+        + WatchListener(name, callback)
+        + WatchRouteConfig(name, callback)
+        + WatchCluster(name, callback)
+        + WatchEndpoints(name, callback)
+        --
+        note: xDS 客户端\n与控制平面通信
+    }
+}
+
+package "目标解析 (Target Parsing)" TARGET_COLOR {
+    RECTANGLE targetParser {
+        --
+        + parseTarget(target): (Target, error)
+        + parseURI(uri): (Target, error)
+        + validateScheme(scheme): error
+        --
+        note: 目标地址解析器\n解析各种格式的目标地址
+    }
+    
+    RECTANGLE schemeRegistry {
+        - builders: map[string]Builder
+        - defaultScheme: string
+        --
+        + Register(builder)
+        + Get(scheme): Builder
+        + SetDefaultScheme(scheme)
+        --
+        note: 解析器注册表\n管理所有解析器构建器
+    }
+}
+
+' 定义关系
+Builder --> Resolver : 创建
+Resolver --> ClientConn : 回调
+ClientConn --> State : 更新状态
+State --> Address : 包含地址列表
+
+' DNS 解析器关系
+dnsBuilder ..|> Builder : 实现
+dnsBuilder --> dnsResolver : 创建
+dnsResolver ..|> Resolver : 实现
+dnsResolver --> dnsWatcher : 使用
+
+' 手动解析器关系
+manualBuilder ..|> Builder : 实现
+manualBuilder --> manualResolver : 创建
+manualResolver ..|> Resolver : 实现
+
+' xDS 解析器关系
+xdsBuilder ..|> Builder : 实现
+xdsBuilder --> xdsResolver : 创建
+xdsResolver ..|> Resolver : 实现
+xdsResolver --> xdsClient : 使用
+
+' 注册表关系
+schemeRegistry --> Builder : 管理
+targetParser --> Target : 创建
+
+' 注释说明
+note top of Builder
+  **解析器构建流程：**
+  1. 解析目标地址格式
+  2. 根据 scheme 选择构建器
+  3. 创建对应的解析器实例
+  4. 启动地址解析过程
+  5. 注册状态更新回调
+end note
+
+note bottom of dnsResolver
+  **DNS 解析特点：**
+  - 支持多种 DNS 记录类型
+  - 自动重解析机制
+  - 服务配置发现
+  - 负载均衡配置
+  - 健康检查集成
+end note
+
+note right of manualResolver
+  **手动解析器用途：**
+  - 测试和开发环境
+  - 静态服务配置
+  - 动态地址更新
+  - 故障转移测试
+  - 性能基准测试
+end note
+
+note left of xdsResolver
+  **xDS 解析器功能：**
+  - 动态服务发现
+  - 流量管理
+  - 安全策略
+  - 负载均衡配置
+  - 故障注入
+end note
+
+' 时序图注释
+note as N1
+  **解析器工作流程：**
+  1. 客户端调用 grpc.NewClient()
+  2. 解析目标地址获取 scheme
+  3. 从注册表获取对应构建器
+  4. 构建器创建解析器实例
+  5. 解析器开始地址解析
+  6. 通过回调更新客户端状态
+  7. 客户端根据新状态更新连接
+end note
+
+@enduml

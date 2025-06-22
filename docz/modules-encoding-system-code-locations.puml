@@ -1,0 +1,391 @@
+@startuml 编码解码系统代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 编码解码系统 (Encoding System) 代码实现位置
+
+' 定义颜色主题
+!define CODEC_COLOR #E8F5E8
+!define COMPRESSOR_COLOR #FFF3E0
+!define PROTO_COLOR #F3E5F5
+!define JSON_COLOR #E3F2FD
+
+package "编码核心接口 (Core Interfaces)" CODEC_COLOR {
+    RECTANGLE Codec {
+        **文件位置**: encoding/encoding.go
+        **行数范围**: 约 50-100 行
+        --
+        **接口定义**:
+        - type Codec interface (行 ~50)
+        - Marshal(v any) ([]byte, error)
+        - Unmarshal(data []byte, v any) error
+        - Name() string
+        --
+        note: 文件: encoding/encoding.go\n编解码器核心接口
+    }
+    
+    RECTANGLE Compressor {
+        **文件位置**: encoding/encoding.go
+        **行数范围**: 约 150-200 行
+        --
+        **接口定义**:
+        - type Compressor interface (行 ~150)
+        - Compress(w io.Writer) (io.WriteCloser, error)
+        - Decompress(r io.Reader) (io.Reader, error)
+        - Name() string
+        --
+        note: 压缩器核心接口
+    }
+    
+    RECTANGLE CodecRegistry {
+        **文件位置**: encoding/encoding.go
+        **行数范围**: 约 250-350 行
+        --
+        **注册表实现**:
+        - var registeredCodecs = make(map[string]Codec) (行 ~250)
+        - func RegisterCodec(codec Codec) (行 ~280)
+        - func GetCodec(contentSubtype string) Codec (行 ~320)
+        --
+        note: 编解码器注册表实现
+    }
+    
+    RECTANGLE CompressorRegistry {
+        **文件位置**: encoding/encoding.go
+        **行数范围**: 约 400-500 行
+        --
+        **注册表实现**:
+        - var registeredCompressors = make(map[string]Compressor) (行 ~400)
+        - func RegisterCompressor(c Compressor) (行 ~430)
+        - func GetCompressor(name string) Compressor (行 ~470)
+        --
+        note: 压缩器注册表实现
+    }
+}
+
+package "Protocol Buffers 编解码 (Proto Codec)" PROTO_COLOR {
+    RECTANGLE protoCodec {
+        **文件位置**: encoding/proto/proto.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type codec struct{} (行 ~50)
+        --
+        **主要方法**:
+        - func (codec) Marshal(v any) ([]byte, error) (行 ~80)
+        - func (codec) Unmarshal(data []byte, v any) error (行 ~120)
+        - func (codec) Name() string (行 ~160)
+        --
+        note: 文件: encoding/proto/proto.go\nProtocol Buffers 编解码器实现
+    }
+    
+    RECTANGLE protoInit {
+        **文件位置**: encoding/proto/proto.go
+        **行数范围**: 约 30-50 行
+        --
+        **初始化函数**:
+        - func init() (行 ~30)
+        - encoding.RegisterCodec(&codec{})
+        --
+        note: Proto 编解码器自动注册
+    }
+    
+    RECTANGLE protoHelpers {
+        **文件位置**: encoding/proto/proto.go
+        **行数范围**: 约 250-350 行
+        --
+        **辅助函数**:
+        - func messageV1Of(v any) protoV1.Message (行 ~250)
+        - func messageV2Of(v any) protoV2.Message (行 ~300)
+        --
+        note: Proto 版本兼容性辅助函数
+    }
+}
+
+package "JSON 编解码 (JSON Codec)" JSON_COLOR {
+    RECTANGLE jsonCodec {
+        **文件位置**: encoding/json/json.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type Codec struct{} (行 ~50)
+        --
+        **主要方法**:
+        - func (c *Codec) Marshal(v any) ([]byte, error) (行 ~80)
+        - func (c *Codec) Unmarshal(data []byte, v any) error (行 ~120)
+        - func (c *Codec) Name() string (行 ~160)
+        --
+        note: 文件: encoding/json/json.go\nJSON 编解码器实现
+    }
+    
+    RECTANGLE jsonInit {
+        **文件位置**: encoding/json/json.go
+        **行数范围**: 约 30-50 行
+        --
+        **初始化函数**:
+        - func init() (行 ~30)
+        - encoding.RegisterCodec(&Codec{})
+        --
+        note: JSON 编解码器自动注册
+    }
+    
+    RECTANGLE protoJSONCodec {
+        **文件位置**: 第三方库或用户实现
+        --
+        **常见实现**:
+        - protojson.Marshal()
+        - protojson.Unmarshal()
+        - 自定义 JSON 编解码器
+        --
+        note: Proto JSON 编解码器\n通常基于 protojson 包
+    }
+}
+
+package "压缩系统 (Compression System)" COMPRESSOR_COLOR {
+    RECTANGLE gzipCompressor {
+        **文件位置**: encoding/gzip/gzip.go
+        **行数范围**: 约 50-300 行
+        --
+        **结构体定义**:
+        - type compressor struct (行 ~50)
+        - poolCompressor sync.Pool
+        - poolDecompressor sync.Pool
+        --
+        **主要方法**:
+        - func (c *compressor) Compress(w io.Writer) (行 ~100)
+        - func (c *compressor) Decompress(r io.Reader) (行 ~150)
+        - func (c *compressor) Name() string (行 ~200)
+        --
+        note: 文件: encoding/gzip/gzip.go\nGzip 压缩器实现
+    }
+    
+    RECTANGLE gzipInit {
+        **文件位置**: encoding/gzip/gzip.go
+        **行数范围**: 约 30-50 行
+        --
+        **初始化函数**:
+        - func init() (行 ~30)
+        - encoding.RegisterCompressor(&compressor{})
+        --
+        note: Gzip 压缩器自动注册
+    }
+    
+    RECTANGLE gzipWrappers {
+        **文件位置**: encoding/gzip/gzip.go
+        **行数范围**: 约 350-500 行
+        --
+        **包装器实现**:
+        - type writer struct (行 ~350)
+        - type reader struct (行 ~400)
+        - 对象池管理
+        --
+        note: Gzip 读写包装器
+    }
+    
+    RECTANGLE identityCompressor {
+        **文件位置**: encoding/encoding.go
+        **行数范围**: 约 550-650 行
+        --
+        **结构体定义**:
+        - type identityCompressor struct{} (行 ~550)
+        --
+        **主要方法**:
+        - func (identityCompressor) Compress(w io.Writer) (行 ~580)
+        - func (identityCompressor) Decompress(r io.Reader) (行 ~600)
+        - func (identityCompressor) Name() string (行 ~620)
+        --
+        note: 文件: encoding/encoding.go\n身份压缩器 (无压缩)
+    }
+}
+
+package "编码配置 (Encoding Configuration)" {
+    RECTANGLE ContentType {
+        **文件位置**: internal/transport/http_util.go
+        **行数范围**: 约 100-200 行
+        --
+        **内容类型处理**:
+        - func contentType(codec encoding.Codec) string (行 ~100)
+        - func contentSubtype(contentType string) string (行 ~150)
+        --
+        note: 文件: internal/transport/http_util.go\n内容类型处理函数
+    }
+    
+    RECTANGLE MessageFraming {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 800-1000 行
+        --
+        **消息帧处理**:
+        - func writeFrame(w io.Writer, compressed bool, data []byte) (行 ~800)
+        - func readFrame(r io.Reader) ([]byte, bool, error) (行 ~900)
+        --
+        note: 文件: internal/transport/transport.go\n消息帧处理函数
+    }
+    
+    RECTANGLE EncodingSelection {
+        **文件位置**: clientconn.go, server.go
+        **行数范围**: 约 1000-1200 行
+        --
+        **编码选择逻辑**:
+        - func (cc *ClientConn) Invoke() 中的编码选择 (行 ~1000)
+        - func (s *Server) processUnaryRPC() 中的编码处理 (行 ~1100)
+        --
+        note: RPC 调用中的编码选择
+    }
+}
+
+package "流编码处理 (Stream Encoding)" {
+    RECTANGLE ClientStreamEncoding {
+        **文件位置**: stream.go
+        **行数范围**: 约 300-500 行
+        --
+        **客户端流编码**:
+        - func (cs *clientStream) SendMsg(m any) error (行 ~300)
+        - func (cs *clientStream) RecvMsg(m any) error (行 ~400)
+        - 编解码器调用
+        --
+        note: 文件: stream.go\n客户端流编码处理
+    }
+    
+    RECTANGLE ServerStreamEncoding {
+        **文件位置**: stream.go
+        **行数范围**: 约 600-800 行
+        --
+        **服务端流编码**:
+        - func (ss *serverStream) SendMsg(m any) error (行 ~600)
+        - func (ss *serverStream) RecvMsg(m any) error (行 ~700)
+        - 编解码器调用
+        --
+        note: 服务端流编码处理
+    }
+}
+
+package "自定义编解码器 (Custom Codecs)" {
+    RECTANGLE CustomCodecExample {
+        **文件位置**: examples/features/encoding/client/main.go
+        **行数范围**: 约 50-200 行
+        --
+        **示例实现**:
+        - type customCodec struct{} (行 ~50)
+        - func (c *customCodec) Marshal(v any) (行 ~100)
+        - func (c *customCodec) Unmarshal(data []byte, v any) (行 ~150)
+        --
+        note: 文件: examples/features/encoding/\n自定义编解码器示例
+    }
+    
+    RECTANGLE ThirdPartyCodecs {
+        **文件位置**: 第三方库
+        --
+        **常见第三方编解码器**:
+        - MessagePack
+        - Avro
+        - Thrift
+        - 自定义二进制格式
+        --
+        note: 第三方编解码器\n通常作为独立包提供
+    }
+}
+
+package "性能优化 (Performance Optimization)" {
+    RECTANGLE BufferPool {
+        **文件位置**: internal/buffer/buffer.go
+        **行数范围**: 约 50-200 行
+        --
+        **缓冲区池实现**:
+        - var bufferPool = sync.Pool{} (行 ~50)
+        - func Get() *bytes.Buffer (行 ~100)
+        - func Put(b *bytes.Buffer) (行 ~150)
+        --
+        note: 文件: internal/buffer/buffer.go\n缓冲区对象池
+    }
+    
+    RECTANGLE MemoryManagement {
+        **文件位置**: internal/transport/transport.go
+        **行数范围**: 约 1200-1400 行
+        --
+        **内存管理**:
+        - 零拷贝优化
+        - 缓冲区复用
+        - 内存池管理
+        --
+        note: 传输层内存管理优化
+    }
+}
+
+' 定义关系和文件依赖
+protoCodec --> Codec : 实现 (跨文件)
+jsonCodec --> Codec : 实现 (跨文件)
+
+gzipCompressor --> Compressor : 实现 (跨文件)
+identityCompressor --> Compressor : 实现 (同文件)
+
+CodecRegistry --> Codec : 管理 (同文件)
+CompressorRegistry --> Compressor : 管理 (同文件)
+
+protoInit --> CodecRegistry : 注册 (跨文件)
+jsonInit --> CodecRegistry : 注册 (跨文件)
+gzipInit --> CompressorRegistry : 注册 (跨文件)
+
+ClientStreamEncoding --> Codec : 使用 (跨文件)
+ServerStreamEncoding --> Codec : 使用 (跨文件)
+
+MessageFraming --> Compressor : 使用 (跨文件)
+EncodingSelection --> CodecRegistry : 查询 (跨文件)
+
+' 文件结构注释
+note top of Codec
+  **encoding 包结构**:
+  encoding/
+  ├── encoding.go (核心接口和注册表)
+  ├── proto/proto.go (Protocol Buffers)
+  ├── json/json.go (JSON 编解码器)
+  └── gzip/gzip.go (Gzip 压缩器)
+end note
+
+note bottom of protoCodec
+  **Protocol Buffers 特性**:
+  - gRPC 默认编码格式
+  - 高效的二进制序列化
+  - 强类型和向后兼容
+  - 跨语言支持
+  - 自动代码生成
+end note
+
+note right of gzipCompressor
+  **压缩器特性**:
+  - 使用对象池减少内存分配
+  - 支持流式压缩
+  - 自动选择压缩级别
+  - 平衡压缩率和性能
+  - 错误处理和恢复
+end note
+
+note left of CodecRegistry
+  **注册机制**:
+  1. 各编解码器在 init() 中自动注册
+  2. 全局 map 存储 name -> Codec
+  3. RPC 调用时根据 content-type 选择
+  4. 支持运行时动态注册
+  5. 默认使用 proto 编解码器
+end note
+
+' 编码流程注释
+note as N1
+  **编码解码流程**:
+  
+  **发送流程**:
+  1. Go 对象 → Codec.Marshal → 字节流
+  2. 字节流 → Compressor.Compress → 压缩数据
+  3. 压缩数据 → 消息帧 → 网络传输
+  
+  **接收流程**:
+  1. 网络数据 → 消息帧 → 压缩数据
+  2. 压缩数据 → Compressor.Decompress → 字节流
+  3. 字节流 → Codec.Unmarshal → Go 对象
+  
+  **性能优化**:
+  - 对象池复用缓冲区
+  - 零拷贝内存管理
+  - 流式压缩处理
+  - 自适应压缩策略
+end note
+
+@enduml

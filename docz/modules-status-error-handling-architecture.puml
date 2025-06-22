@@ -1,0 +1,346 @@
+@startuml 状态码和错误处理架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 状态码和错误处理 (Status & Error Handling) 架构设计
+
+' 定义颜色主题
+!define STATUS_COLOR #E8F5E8
+!define CODES_COLOR #FFF3E0
+!define ERROR_COLOR #F3E5F5
+!define DETAILS_COLOR #E3F2FD
+!define PROPAGATION_COLOR #FCE4EC
+
+package "状态码核心 (Status Codes Core)" STATUS_COLOR {
+    RECTANGLE Status {
+        - s: *spb.Status
+        --
+        + New(c codes.Code, msg string): *Status
+        + Newf(c codes.Code, format string, a ...any): *Status
+        + Error(c codes.Code, msg string): error
+        + Errorf(c codes.Code, format string, a ...any): error
+        + FromError(err error): (*Status, bool)
+        + Code(): codes.Code
+        + Message(): string
+        + Details(): []any
+        + Proto(): *spb.Status
+        + Err(): error
+        + WithDetails(details ...proto.Message): (*Status, error)
+        --
+        note: gRPC 状态结构\n包含状态码、消息和详情
+    }
+    
+    RECTANGLE StatusProto {
+        + Code: int32
+        + Message: string
+        + Details: []*anypb.Any
+        --
+        note: 状态的 Protocol Buffer 表示\n用于网络传输
+    }
+    
+    interface "error" as ErrorInterface {
+        + Error(): string
+        --
+        note: Go 标准错误接口
+    }
+}
+
+package "状态码定义 (Status Codes)" CODES_COLOR {
+    enum codes.Code {
+        OK = 0
+        Cancelled = 1
+        Unknown = 2
+        InvalidArgument = 3
+        DeadlineExceeded = 4
+        NotFound = 5
+        AlreadyExists = 6
+        PermissionDenied = 7
+        ResourceExhausted = 8
+        FailedPrecondition = 9
+        Aborted = 10
+        OutOfRange = 11
+        Unimplemented = 12
+        Internal = 13
+        Unavailable = 14
+        DataLoss = 15
+        Unauthenticated = 16
+        --
+        note: gRPC 标准状态码\n基于 HTTP 状态码扩展
+    }
+    
+    RECTANGLE CodeMapping {
+        --
+        + HTTPStatusFromCode(code): int
+        + CodeFromHTTPStatus(status): codes.Code
+        + IsRetriableCode(code): bool
+        + IsClientError(code): bool
+        + IsServerError(code): bool
+        --
+        note: 状态码映射\n与 HTTP 状态码的转换
+    }
+    
+    RECTANGLE CodeClassification {
+        --
+        + IsClientError(code): bool
+        + IsServerError(code): bool
+        + IsNetworkError(code): bool
+        + IsRetriable(code): bool
+        + IsTemporary(code): bool
+        --
+        note: 状态码分类\n错误类型判断
+    }
+}
+
+package "错误详情 (Error Details)" DETAILS_COLOR {
+    RECTANGLE ErrorDetails {
+        --
+        + BadRequest: *errdetails.BadRequest
+        + RetryInfo: *errdetails.RetryInfo
+        + DebugInfo: *errdetails.DebugInfo
+        + QuotaFailure: *errdetails.QuotaFailure
+        + ErrorInfo: *errdetails.ErrorInfo
+        + PreconditionFailure: *errdetails.PreconditionFailure
+        + BadRequest: *errdetails.BadRequest
+        + RequestInfo: *errdetails.RequestInfo
+        + ResourceInfo: *errdetails.ResourceInfo
+        + Help: *errdetails.Help
+        + LocalizedMessage: *errdetails.LocalizedMessage
+        --
+        note: 标准错误详情类型\n提供结构化错误信息
+    }
+    
+    RECTANGLE BadRequest {
+        + FieldViolations: []*BadRequest_FieldViolation
+        --
+        note: 请求验证错误\n包含字段级别的错误信息
+    }
+    
+    RECTANGLE RetryInfo {
+        + RetryDelay: *durationpb.Duration
+        --
+        note: 重试信息\n指示客户端何时重试
+    }
+    
+    RECTANGLE DebugInfo {
+        + StackEntries: []string
+        + Detail: string
+        --
+        note: 调试信息\n包含堆栈跟踪和详细信息
+    }
+    
+    RECTANGLE ErrorInfo {
+        + Reason: string
+        + Domain: string
+        + Metadata: map[string]string
+        --
+        note: 错误信息\n包含错误原因和域信息
+    }
+}
+
+package "错误处理 (Error Handling)" ERROR_COLOR {
+    RECTANGLE ErrorHandler {
+        --
+        + HandleError(err error): *Status
+        + WrapError(err error, code codes.Code, msg string): error
+        + UnwrapError(err error): error
+        + IsGRPCError(err error): bool
+        + ExtractStatus(err error): *Status
+        --
+        note: 错误处理器\n统一错误处理逻辑
+    }
+    
+    RECTANGLE ErrorConverter {
+        --
+        + ToGRPCError(err error): error
+        + FromGRPCError(err error): error
+        + ConvertStandardError(err error): error
+        + ConvertCustomError(err error): error
+        --
+        note: 错误转换器\n在不同错误类型间转换
+    }
+    
+    RECTANGLE ErrorWrapper {
+        - cause: error
+        - code: codes.Code
+        - message: string
+        - details: []proto.Message
+        --
+        + Error(): string
+        + Unwrap(): error
+        + GRPCStatus(): *Status
+        + Cause(): error
+        + WithDetails(details): *ErrorWrapper
+        --
+        note: 错误包装器\n包装和增强错误信息
+    }
+    
+    RECTANGLE ErrorChain {
+        - errors: []error
+        --
+        + Add(err error)
+        + Errors(): []error
+        + Error(): string
+        + HasErrors(): bool
+        + FirstError(): error
+        + ToGRPCError(): error
+        --
+        note: 错误链\n聚合多个错误
+    }
+}
+
+package "错误传播 (Error Propagation)" PROPAGATION_COLOR {
+    RECTANGLE ClientErrorPropagation {
+        --
+        + receiveError(stream): error
+        + extractStatus(headers, trailers): *Status
+        + handleStreamError(err): error
+        + propagateError(err): error
+        --
+        note: 客户端错误传播\n从服务端接收和处理错误
+    }
+    
+    RECTANGLE ServerErrorPropagation {
+        --
+        + sendError(stream, status): error
+        + setErrorHeaders(headers, status)
+        + setErrorTrailers(trailers, status)
+        + handlePanic(recover): error
+        --
+        note: 服务端错误传播\n向客户端发送错误信息
+    }
+    
+    RECTANGLE ErrorInterceptor {
+        --
+        + UnaryClientInterceptor(): grpc.UnaryClientInterceptor
+        + UnaryServerInterceptor(): grpc.UnaryServerInterceptor
+        + StreamClientInterceptor(): grpc.StreamClientInterceptor
+        + StreamServerInterceptor(): grpc.StreamServerInterceptor
+        + handleError(err): error
+        + logError(err)
+        + transformError(err): error
+        --
+        note: 错误拦截器\n在拦截器中处理错误
+    }
+    
+    RECTANGLE ErrorRecovery {
+        --
+        + RecoverFromPanic(recover): error
+        + HandleTimeout(ctx): error
+        + HandleCancellation(ctx): error
+        + HandleNetworkError(err): error
+        + ApplyFallback(err): (any, error)
+        --
+        note: 错误恢复\n从各种错误情况中恢复
+    }
+}
+
+package "错误监控 (Error Monitoring)" {
+    RECTANGLE ErrorMetrics {
+        --
+        + RecordError(method, code)
+        + RecordErrorRate(method, rate)
+        + RecordErrorLatency(method, duration)
+        + GetErrorStats(method): ErrorStats
+        --
+        note: 错误指标\n收集错误统计信息
+    }
+    
+    RECTANGLE ErrorLogger {
+        --
+        + LogError(err, context)
+        + LogErrorWithStack(err, stack)
+        + LogStructuredError(err, fields)
+        + SetLogLevel(level)
+        --
+        note: 错误日志\n记录错误信息
+    }
+    
+    RECTANGLE ErrorAlerting {
+        --
+        + SendAlert(err, severity)
+        + CheckThreshold(errorRate): bool
+        + EscalateError(err)
+        + NotifyOnCall(err)
+        --
+        note: 错误告警\n错误阈值监控和告警
+    }
+}
+
+' 定义关系
+Status --> StatusProto : 包含
+Status --> codes.Code : 使用
+Status --> ErrorDetails : 包含详情
+Status ..|> ErrorInterface : 实现
+
+ErrorHandler --> Status : 创建
+ErrorHandler --> ErrorConverter : 使用
+ErrorConverter --> ErrorWrapper : 创建
+ErrorWrapper --> ErrorChain : 组合
+
+ClientErrorPropagation --> Status : 处理
+ServerErrorPropagation --> Status : 发送
+ErrorInterceptor --> ErrorHandler : 使用
+ErrorRecovery --> ErrorHandler : 使用
+
+ErrorMetrics --> codes.Code : 统计
+ErrorLogger --> Status : 记录
+ErrorAlerting --> ErrorMetrics : 监控
+
+BadRequest --> ErrorDetails : 属于
+RetryInfo --> ErrorDetails : 属于
+DebugInfo --> ErrorDetails : 属于
+ErrorInfo --> ErrorDetails : 属于
+
+CodeMapping --> codes.Code : 映射
+CodeClassification --> codes.Code : 分类
+
+' 注释说明
+note top of Status
+  **状态结构特点：**
+  - 包含状态码和消息
+  - 支持结构化错误详情
+  - 实现标准错误接口
+  - 可序列化传输
+  - 支持错误链包装
+end note
+
+note bottom of codes.Code
+  **状态码分类：**
+  - 0: 成功
+  - 1-2: 取消和未知
+  - 3-11: 客户端错误
+  - 12-16: 服务端错误
+  - 基于 HTTP 状态码设计
+end note
+
+note right of ErrorDetails
+  **错误详情用途：**
+  - 提供结构化错误信息
+  - 支持多语言错误消息
+  - 包含重试指导信息
+  - 提供调试信息
+  - 支持自定义错误类型
+end note
+
+note left of ErrorHandler
+  **错误处理策略：**
+  - 统一错误转换
+  - 错误包装和解包
+  - 错误链管理
+  - 上下文保留
+  - 类型安全转换
+end note
+
+' 时序图注释
+note as N1
+  **错误传播流程：**
+  服务端：业务错误 → 转换为 gRPC 状态 → 
+  设置响应头/尾部 → 发送给客户端
+  
+  客户端：接收错误响应 → 解析状态信息 → 
+  转换为 Go 错误 → 返回给调用者
+  
+  拦截器可以在任何阶段介入处理错误
+end note
+
+@enduml

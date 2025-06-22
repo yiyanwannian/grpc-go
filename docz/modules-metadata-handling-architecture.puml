@@ -1,0 +1,302 @@
+@startuml 元数据处理架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 元数据处理 (Metadata Handling) 架构设计
+
+' 定义颜色主题
+!define METADATA_COLOR #E8F5E8
+!define CONTEXT_COLOR #FFF3E0
+!define PROPAGATION_COLOR #F3E5F5
+!define BINARY_COLOR #E3F2FD
+!define INTERCEPTOR_COLOR #FCE4EC
+
+package "元数据核心 (Metadata Core)" METADATA_COLOR {
+    RECTANGLE MD {
+        - data: map[string][]string
+        --
+        + New(m map[string]string): MD
+        + Pairs(kv ...string): MD
+        + Get(k string): []string
+        + Set(k string, vals ...string)
+        + Append(k string, vals ...string)
+        + Delete(k string)
+        + Len(): int
+        + Copy(): MD
+        + Join(mds ...MD): MD
+        --
+        note: 元数据映射\n键值对形式存储
+    }
+    
+    RECTANGLE metadataKey {
+        --
+        note: 元数据上下文键\n用于在 context 中存储元数据
+    }
+    
+    RECTANGLE rawMD {
+        - md: MD
+        --
+        note: 原始元数据\n未经处理的元数据
+    }
+}
+
+package "上下文管理 (Context Management)" CONTEXT_COLOR {
+    RECTANGLE OutgoingContext {
+        - parent: context.Context
+        - md: MD
+        --
+        + NewOutgoingContext(ctx, md): context.Context
+        + AppendToOutgoingContext(ctx, kv): context.Context
+        + FromOutgoingContext(ctx): (MD, bool)
+        --
+        note: 出站上下文\n客户端发送元数据
+    }
+    
+    RECTANGLE IncomingContext {
+        - parent: context.Context
+        - md: MD
+        --
+        + NewIncomingContext(ctx, md): context.Context
+        + FromIncomingContext(ctx): (MD, bool)
+        --
+        note: 入站上下文\n服务端接收元数据
+    }
+    
+    RECTANGLE ContextPropagator {
+        - keys: []string
+        --
+        + Extract(ctx): MD
+        + Inject(ctx, md): context.Context
+        + Fields(): []string
+        --
+        note: 上下文传播器\n管理元数据传播
+    }
+}
+
+package "元数据传播 (Metadata Propagation)" PROPAGATION_COLOR {
+    RECTANGLE ClientPropagation {
+        --
+        + sendMetadata(ctx, md): error
+        + receiveMetadata(ctx): (MD, MD, error)
+        + extractHeaders(headers): MD
+        + injectHeaders(md): map[string]string
+        --
+        note: 客户端元数据传播\n发送和接收元数据
+    }
+    
+    RECTANGLE ServerPropagation {
+        --
+        + receiveMetadata(ctx): MD
+        + sendHeaders(ctx, md): error
+        + sendTrailers(ctx, md): error
+        + extractMetadata(headers): MD
+        --
+        note: 服务端元数据传播\n接收和发送元数据
+    }
+    
+    RECTANGLE MetadataCarrier {
+        - headers: map[string][]string
+        --
+        + Get(key): string
+        + Set(key, value)
+        + Keys(): []string
+        --
+        note: 元数据载体\n在传输层携带元数据
+    }
+    
+    RECTANGLE HeaderMapping {
+        --
+        + toHTTP2Headers(md): map[string][]string
+        + fromHTTP2Headers(headers): MD
+        + validateKey(key): error
+        + encodeValue(value): string
+        + decodeValue(encoded): string
+        --
+        note: 头部映射\n元数据与 HTTP/2 头部转换
+    }
+}
+
+package "二进制元数据 (Binary Metadata)" BINARY_COLOR {
+    RECTANGLE BinaryMetadata {
+        --
+        + encodeBinaryHeader(v []byte): string
+        + decodeBinaryHeader(v string): ([]byte, error)
+        + isBinaryKey(key): bool
+        + validateBinaryKey(key): error
+        --
+        note: 二进制元数据处理\nBase64 编码的二进制数据
+    }
+    
+    RECTANGLE BinaryEncoder {
+        --
+        + Encode(data []byte): string
+        + Decode(encoded string): ([]byte, error)
+        --
+        note: 二进制编码器\nBase64 编解码
+    }
+    
+    RECTANGLE BinaryValidator {
+        --
+        + ValidateKey(key): error
+        + ValidateValue(value): error
+        + IsBinaryKey(key): bool
+        --
+        note: 二进制验证器\n验证二进制元数据格式
+    }
+}
+
+package "元数据拦截器 (Metadata Interceptors)" INTERCEPTOR_COLOR {
+    RECTANGLE ClientMetadataInterceptor {
+        --
+        + UnaryClientInterceptor(): grpc.UnaryClientInterceptor
+        + StreamClientInterceptor(): grpc.StreamClientInterceptor
+        + addMetadata(ctx, md): context.Context
+        + extractMetadata(ctx): MD
+        --
+        note: 客户端元数据拦截器\n自动添加和提取元数据
+    }
+    
+    RECTANGLE ServerMetadataInterceptor {
+        --
+        + UnaryServerInterceptor(): grpc.UnaryServerInterceptor
+        + StreamServerInterceptor(): grpc.StreamServerInterceptor
+        + extractMetadata(ctx): MD
+        + injectMetadata(ctx, md): context.Context
+        --
+        note: 服务端元数据拦截器\n处理入站和出站元数据
+    }
+    
+    RECTANGLE MetadataValidator {
+        --
+        + ValidateIncoming(md): error
+        + ValidateOutgoing(md): error
+        + ValidateKey(key): error
+        + ValidateValue(value): error
+        + SanitizeMetadata(md): MD
+        --
+        note: 元数据验证器\n验证元数据格式和内容
+    }
+    
+    RECTANGLE MetadataLogger {
+        --
+        + LogIncoming(method, md)
+        + LogOutgoing(method, md)
+        + LogHeaders(headers)
+        + LogTrailers(trailers)
+        --
+        note: 元数据日志记录器\n记录元数据传输日志
+    }
+}
+
+package "特殊元数据处理 (Special Metadata)" {
+    RECTANGLE AuthMetadata {
+        - authType: string
+        - token: string
+        --
+        + SetAuthorization(md, token)
+        + GetAuthorization(md): string
+        + SetBearer(md, token)
+        + GetBearer(md): string
+        --
+        note: 认证元数据\n处理认证相关头部
+    }
+    
+    RECTANGLE TracingMetadata {
+        - traceID: string
+        - spanID: string
+        - baggage: map[string]string
+        --
+        + SetTraceID(md, id)
+        + GetTraceID(md): string
+        + SetSpanID(md, id)
+        + GetSpanID(md): string
+        + SetBaggage(md, key, value)
+        + GetBaggage(md, key): string
+        --
+        note: 追踪元数据\n处理分布式追踪信息
+    }
+    
+    RECTANGLE CustomMetadata {
+        - namespace: string
+        - prefix: string
+        --
+        + SetCustom(md, key, value)
+        + GetCustom(md, key): string
+        + ListCustom(md): map[string]string
+        + ValidateCustom(key, value): error
+        --
+        note: 自定义元数据\n处理应用特定元数据
+    }
+}
+
+' 定义关系
+MD --> metadataKey : 使用
+MD --> rawMD : 包装
+
+OutgoingContext --> MD : 包含
+IncomingContext --> MD : 包含
+ContextPropagator --> MD : 处理
+
+ClientPropagation --> MetadataCarrier : 使用
+ServerPropagation --> MetadataCarrier : 使用
+MetadataCarrier --> HeaderMapping : 使用
+
+BinaryMetadata --> BinaryEncoder : 使用
+BinaryMetadata --> BinaryValidator : 使用
+
+ClientMetadataInterceptor --> OutgoingContext : 创建
+ServerMetadataInterceptor --> IncomingContext : 创建
+MetadataValidator --> MD : 验证
+MetadataLogger --> MD : 记录
+
+AuthMetadata --> MD : 操作
+TracingMetadata --> MD : 操作
+CustomMetadata --> MD : 操作
+
+' 注释说明
+note top of MD
+  **元数据特点：**
+  - 键值对映射结构
+  - 键名不区分大小写
+  - 支持多值
+  - 二进制数据 Base64 编码
+  - 键名以 -bin 结尾表示二进制
+end note
+
+note bottom of OutgoingContext
+  **出站元数据流程：**
+  1. 创建或追加元数据到上下文
+  2. 拦截器处理元数据
+  3. 转换为 HTTP/2 头部
+  4. 通过传输层发送
+  5. 服务端接收并解析
+end note
+
+note right of IncomingContext
+  **入站元数据流程：**
+  1. 传输层接收 HTTP/2 头部
+  2. 转换为元数据格式
+  3. 创建入站上下文
+  4. 拦截器处理元数据
+  5. 业务逻辑访问元数据
+end note
+
+note left of BinaryMetadata
+  **二进制元数据规则：**
+  - 键名必须以 -bin 结尾
+  - 值使用 Base64 编码
+  - 支持任意二进制数据
+  - 自动编解码处理
+end note
+
+' 时序图注释
+note as N1
+  **元数据传播时序：**
+  客户端：创建元数据 → 添加到上下文 → 
+  拦截器处理 → 转换为头部 → 发送
+  
+  服务端：接收头部 → 转换为元数据 → 
+  创建上下文 → 拦截器处理 → 业务逻辑
+end note
+
+@enduml

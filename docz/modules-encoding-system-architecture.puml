@@ -1,0 +1,334 @@
+@startuml 编码解码系统架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 编码解码系统 (Encoding System) 架构设计
+
+' 定义颜色主题
+!define CODEC_COLOR #E8F5E8
+!define COMPRESSOR_COLOR #FFF3E0
+!define PROTO_COLOR #F3E5F5
+!define JSON_COLOR #E3F2FD
+!define REGISTRY_COLOR #FCE4EC
+
+package "编码核心接口 (Core Interfaces)" CODEC_COLOR {
+    interface "encoding.Codec" as Codec {
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        --
+        note: 编解码器接口\n负责消息序列化和反序列化
+    }
+    
+    interface "encoding.Compressor" as Compressor {
+        + Compress(w io.Writer): (io.WriteCloser, error)
+        + Decompress(r io.Reader): (io.Reader, error)
+        + Name(): string
+        --
+        note: 压缩器接口\n负责数据压缩和解压缩
+    }
+    
+    RECTANGLE CodecRegistry {
+        - codecs: map[string]Codec
+        - defaultCodec: Codec
+        --
+        + RegisterCodec(codec Codec)
+        + GetCodec(name string): Codec
+        + SetDefaultCodec(codec Codec)
+        + ListCodecs(): []string
+        --
+        note: 编解码器注册表\n管理所有可用的编解码器
+    }
+    
+    RECTANGLE CompressorRegistry {
+        - compressors: map[string]Compressor
+        - defaultCompressor: Compressor
+        --
+        + RegisterCompressor(compressor Compressor)
+        + GetCompressor(name string): Compressor
+        + SetDefaultCompressor(compressor Compressor)
+        + ListCompressors(): []string
+        --
+        note: 压缩器注册表\n管理所有可用的压缩器
+    }
+}
+
+package "Protocol Buffers 编解码 (Proto Codec)" PROTO_COLOR {
+    RECTANGLE protoCodec {
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        --
+        note: Protocol Buffers 编解码器\ngRPC 默认编码格式
+    }
+    
+    RECTANGLE protoV1Codec {
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        + messageV1Of(v any): protoV1.Message
+        --
+        note: Proto V1 编解码器\n支持 proto v1 消息
+    }
+    
+    RECTANGLE protoV2Codec {
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        + messageV2Of(v any): protoV2.Message
+        --
+        note: Proto V2 编解码器\n支持 proto v2 消息
+    }
+    
+    RECTANGLE protoBufferPool {
+        - pool: sync.Pool
+        --
+        + Get(): *proto.Buffer
+        + Put(buf *proto.Buffer)
+        + NewBuffer(): *proto.Buffer
+        --
+        note: Proto 缓冲区池\n复用序列化缓冲区
+    }
+}
+
+package "JSON 编解码 (JSON Codec)" JSON_COLOR {
+    RECTANGLE jsonCodec {
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        --
+        note: JSON 编解码器\n支持 JSON 格式序列化
+    }
+    
+    RECTANGLE protoJSONCodec {
+        - marshaler: *protojson.MarshalOptions
+        - unmarshaler: *protojson.UnmarshalOptions
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        + marshalProtoMessage(m proto.Message): ([]byte, error)
+        + unmarshalProtoMessage(data []byte, m proto.Message): error
+        --
+        note: Proto JSON 编解码器\nProtobuf 消息的 JSON 序列化
+    }
+    
+    RECTANGLE jsonOptions {
+        + UseProtoNames: bool
+        + UseEnumNumbers: bool
+        + EmitUnpopulated: bool
+        + Indent: string
+        + AllowPartial: bool
+        + DiscardUnknown: bool
+        --
+        note: JSON 编码选项\n配置 JSON 序列化行为
+    }
+}
+
+package "压缩系统 (Compression System)" COMPRESSOR_COLOR {
+    RECTANGLE gzipCompressor {
+        - poolCompressor: sync.Pool
+        - poolDecompressor: sync.Pool
+        --
+        + Compress(w io.Writer): (io.WriteCloser, error)
+        + Decompress(r io.Reader): (io.Reader, error)
+        + Name(): string
+        --
+        note: Gzip 压缩器\n使用 gzip 算法压缩
+    }
+    
+    RECTANGLE snappyCompressor {
+        --
+        + Compress(w io.Writer): (io.WriteCloser, error)
+        + Decompress(r io.Reader): (io.Reader, error)
+        + Name(): string
+        --
+        note: Snappy 压缩器\n使用 Snappy 算法压缩
+    }
+    
+    RECTANGLE identityCompressor {
+        --
+        + Compress(w io.Writer): (io.WriteCloser, error)
+        + Decompress(r io.Reader): (io.Reader, error)
+        + Name(): string
+        --
+        note: 身份压缩器\n不进行任何压缩
+    }
+    
+    RECTANGLE compressorPool {
+        - gzipWriters: sync.Pool
+        - gzipReaders: sync.Pool
+        - snappyWriters: sync.Pool
+        - snappyReaders: sync.Pool
+        --
+        + GetGzipWriter(): *gzip.Writer
+        + PutGzipWriter(w *gzip.Writer)
+        + GetGzipReader(): *gzip.Reader
+        + PutGzipReader(r *gzip.Reader)
+        --
+        note: 压缩器对象池\n复用压缩器实例
+    }
+}
+
+package "自定义编解码器 (Custom Codecs)" {
+    RECTANGLE customCodec {
+        - name: string
+        - marshaler: func(any) ([]byte, error)
+        - unmarshaler: func([]byte, any) error
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        --
+        note: 自定义编解码器\n支持用户自定义序列化格式
+    }
+    
+    RECTANGLE binaryCodec {
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        + encodeBinary(data []byte): []byte
+        + decodeBinary(encoded []byte): []byte
+        --
+        note: 二进制编解码器\n原始二进制数据处理
+    }
+    
+    RECTANGLE avroCodec {
+        - schema: *avro.Schema
+        --
+        + Marshal(v any): ([]byte, error)
+        + Unmarshal(data []byte, v any): error
+        + Name(): string
+        + setSchema(schema *avro.Schema)
+        --
+        note: Avro 编解码器\n支持 Apache Avro 格式
+    }
+}
+
+package "编码配置 (Encoding Configuration)" REGISTRY_COLOR {
+    RECTANGLE EncodingConfig {
+        + DefaultCodec: string
+        + DefaultCompressor: string
+        + EnableCompression: bool
+        + CompressionThreshold: int
+        + MaxMessageSize: int
+        --
+        note: 编码配置\n全局编码设置
+    }
+    
+    RECTANGLE CodecSelector {
+        --
+        + SelectCodec(contentType string): Codec
+        + SelectCompressor(encoding string): Compressor
+        + ShouldCompress(size int): bool
+        + GetContentType(codec Codec): string
+        --
+        note: 编解码器选择器\n根据条件选择合适的编解码器
+    }
+    
+    RECTANGLE MessageFramer {
+        --
+        + FrameMessage(data []byte, compressed bool): []byte
+        + UnframeMessage(frame []byte): ([]byte, bool, error)
+        + ValidateFrame(frame []byte): error
+        --
+        note: 消息帧处理器\n处理 gRPC 消息帧格式
+    }
+    
+    RECTANGLE EncodingMetrics {
+        --
+        + RecordEncodingTime(codec string, duration time.Duration)
+        + RecordCompressionRatio(compressor string, ratio float64)
+        + RecordMessageSize(size int)
+        + GetEncodingStats(): EncodingStats
+        --
+        note: 编码指标\n收集编码性能统计
+    }
+}
+
+' 定义关系
+protoCodec ..|> Codec : 实现
+protoV1Codec ..|> Codec : 实现
+protoV2Codec ..|> Codec : 实现
+jsonCodec ..|> Codec : 实现
+protoJSONCodec ..|> Codec : 实现
+customCodec ..|> Codec : 实现
+binaryCodec ..|> Codec : 实现
+avroCodec ..|> Codec : 实现
+
+gzipCompressor ..|> Compressor : 实现
+snappyCompressor ..|> Compressor : 实现
+identityCompressor ..|> Compressor : 实现
+
+CodecRegistry --> Codec : 管理
+CompressorRegistry --> Compressor : 管理
+
+protoCodec --> protoBufferPool : 使用
+protoJSONCodec --> jsonOptions : 配置
+
+gzipCompressor --> compressorPool : 使用
+snappyCompressor --> compressorPool : 使用
+
+CodecSelector --> CodecRegistry : 查询
+CodecSelector --> CompressorRegistry : 查询
+MessageFramer --> Codec : 使用
+MessageFramer --> Compressor : 使用
+
+EncodingMetrics --> Codec : 监控
+EncodingMetrics --> Compressor : 监控
+
+' 注释说明
+note top of Codec
+  **编解码器职责：**
+  - 将 Go 对象序列化为字节流
+  - 将字节流反序列化为 Go 对象
+  - 提供编码格式标识
+  - 支持类型安全转换
+  - 处理编码错误
+end note
+
+note bottom of Compressor
+  **压缩器职责：**
+  - 压缩数据以减少传输大小
+  - 解压缩接收到的数据
+  - 提供压缩算法标识
+  - 管理压缩流的生命周期
+  - 优化内存使用
+end note
+
+note right of protoCodec
+  **Protocol Buffers 特点：**
+  - gRPC 默认编码格式
+  - 高效的二进制序列化
+  - 强类型和向后兼容
+  - 跨语言支持
+  - 自动代码生成
+end note
+
+note left of gzipCompressor
+  **压缩策略：**
+  - 根据消息大小决定是否压缩
+  - 使用对象池减少内存分配
+  - 支持流式压缩
+  - 平衡压缩率和性能
+  - 自动选择压缩级别
+end note
+
+' 时序图注释
+note as N1
+  **编码流程：**
+  发送：Go 对象 → Codec.Marshal → 字节流 → 
+  Compressor.Compress → 压缩数据 → 网络传输
+  
+  接收：网络数据 → Compressor.Decompress → 
+  字节流 → Codec.Unmarshal → Go 对象
+  
+  每个步骤都可能涉及缓冲区池和性能优化
+end note
+
+@enduml

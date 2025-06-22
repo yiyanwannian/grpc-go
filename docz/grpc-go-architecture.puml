@@ -1,0 +1,365 @@
+@startuml gRPC-Go 整体架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 整体架构设计
+
+' 定义颜色主题
+!define CLIENT_COLOR #E1F5FE
+!define SERVER_COLOR #F3E5F5
+!define TRANSPORT_COLOR #E8F5E8
+!define BALANCER_COLOR #FFF3E0
+!define RESOLVER_COLOR #FCE4EC
+
+package "客户端层 (Client Side)" CLIENT_COLOR {
+    RECTANGLE ClientApplication {
+        + 业务逻辑
+        + RPC 调用
+        + 错误处理
+        --
+        note: 用户应用程序
+    }
+    
+    RECTANGLE ClientConn {
+        + target: string
+        + resolverWrapper: *ccResolverWrapper
+        + balancerWrapper: *ccBalancerWrapper
+        + conns: map[*addrConn]struct{}
+        --
+        + NewClient(target, opts)
+        + Invoke(ctx, method, req, resp)
+        + NewStream(ctx, desc, method)
+        + Close()
+        --
+        note: 客户端连接管理核心
+    }
+    
+    RECTANGLE DialOptions {
+        + WithTransportCredentials()
+        + WithUnaryInterceptor()
+        + WithStreamInterceptor()
+        + WithKeepaliveParams()
+        --
+        note: 连接配置选项
+    }
+}
+
+package "服务端层 (Server Side)" SERVER_COLOR {
+    RECTANGLE ServerApplication {
+        + 服务实现
+        + 业务逻辑处理
+        + 响应生成
+        --
+        note: 用户服务实现
+    }
+    
+    RECTANGLE Server {
+        + lis: map[net.Listener]bool
+        + conns: map[string]map[transport.ServerTransport]bool
+        + services: map[string]*serviceInfo
+        --
+        + NewServer(opts)
+        + RegisterService(desc, impl)
+        + Serve(listener)
+        + GracefulStop()
+        --
+        note: 服务端核心管理器
+    }
+    
+    RECTANGLE ServerOptions {
+        + WithCreds()
+        + WithUnaryInterceptor()
+        + WithStreamInterceptor()
+        + WithMaxMsgSize()
+        --
+        note: 服务端配置选项
+    }
+}
+
+package "负载均衡层 (Load Balancing)" BALANCER_COLOR {
+    interface Balancer {
+        + UpdateClientConnState(state)
+        + ResolverError(err)
+        + UpdateSubConnState(sc, state)
+        + Close()
+        --
+        note: 负载均衡器接口
+    }
+    
+    interface Picker {
+        + Pick(info) PickResult
+        --
+        note: 连接选择器接口
+    }
+    
+    RECTANGLE PickFirst {
+        + 选择第一个可用连接
+        + 提供连接粘性
+        --
+        note: 首选策略
+    }
+    
+    RECTANGLE RoundRobin {
+        + 轮询选择连接
+        + 平均分配负载
+        --
+        note: 轮询策略
+    }
+    
+    RECTANGLE WeightedRoundRobin {
+        + 基于权重的轮询
+        + 支持异构后端
+        --
+        note: 加权轮询策略
+    }
+    
+    RECTANGLE SubConn {
+        + addr: resolver.Address
+        + state: connectivity.State
+        + transport: ClientTransport
+        --
+        + Connect()
+        + GetConnectivityState()
+        --
+        note: 子连接管理
+    }
+}
+
+package "服务发现层 (Service Discovery)" RESOLVER_COLOR {
+    interface Resolver {
+        + ResolveNow(opts)
+        + Close()
+        --
+        note: 解析器接口
+    }
+    
+    interface Builder {
+        + Build(target, cc, opts) Resolver
+        + Scheme() string
+        --
+        note: 解析器构建器
+    }
+    
+    RECTANGLE DNSResolver {
+        + 标准 DNS 解析
+        + SRV 记录支持
+        + 自动重解析
+        --
+        note: DNS 服务发现
+    }
+    
+    RECTANGLE ManualResolver {
+        + 手动配置地址
+        + 动态地址更新
+        + 测试友好
+        --
+        note: 手动服务发现
+    }
+    
+    RECTANGLE xDSResolver {
+        + xDS 协议支持
+        + 动态配置更新
+        + 服务网格集成
+        --
+        note: xDS 服务发现
+    }
+}
+
+package "传输层 (Transport Layer)" TRANSPORT_COLOR {
+    interface ClientTransport {
+        + NewStream(ctx, callHdr) *ClientStream
+        + Close(err)
+        + GracefulClose()
+        + Error() <-chan struct{}
+        --
+        note: 客户端传输接口
+    }
+    
+    interface ServerTransport {
+        + HandleStreams(ctx, handler)
+        + Close(err)
+        + Drain(debugData)
+        + Peer() *peer.Peer
+        --
+        note: 服务端传输接口
+    }
+    
+    RECTANGLE HTTP2Client {
+        + conn: net.Conn
+        + loopy: *loopyWriter
+        + authInfo: credentials.AuthInfo
+        --
+        + 多路复用支持
+        + 流控制管理
+        + 保活机制
+        --
+        note: HTTP/2 客户端实现
+    }
+    
+    RECTANGLE HTTP2Server {
+        + conn: net.Conn
+        + maxStreams: uint32
+        + activeStreams: map[uint32]*Stream
+        --
+        + 并发流处理
+        + 优雅关闭
+        + 错误恢复
+        --
+        note: HTTP/2 服务端实现
+    }
+    
+    RECTANGLE Stream {
+        + id: uint32
+        + state: streamState
+        + buf: *recvBuffer
+        --
+        + Read(n) BufferSlice
+        + Write(hdr, data, opts)
+        + Close(err)
+        --
+        note: RPC 流抽象
+    }
+}
+
+package "核心组件 (Core Components)" {
+    RECTANGLE Interceptors {
+        + UnaryClientInterceptor
+        + StreamClientInterceptor
+        + UnaryServerInterceptor
+        + StreamServerInterceptor
+        --
+        note: 拦截器链
+    }
+    
+    RECTANGLE Credentials {
+        + TransportCredentials
+        + PerRPCCredentials
+        + TLS, OAuth, ALTS
+        --
+        note: 认证授权
+    }
+    
+    RECTANGLE Metadata {
+        + MD: map[string][]string
+        + FromIncomingContext()
+        + AppendToOutgoingContext()
+        --
+        note: 元数据处理
+    }
+    
+    RECTANGLE Status {
+        + Code: codes.Code
+        + Message: string
+        + Details: []any
+        --
+        note: 状态码处理
+    }
+    
+    RECTANGLE Encoding {
+        + Codec interface
+        + Compressor interface
+        + Proto, JSON, Gzip
+        --
+        note: 编码解码
+    }
+}
+
+package "扩展功能 (Extensions)" {
+    RECTANGLE Health {
+        + HealthServer
+        + HealthClient
+        + 健康状态检查
+        --
+        note: 健康检查服务
+    }
+    
+    RECTANGLE Reflection {
+        + ServerReflection
+        + 服务信息查询
+        + 动态客户端支持
+        --
+        note: 服务反射
+    }
+    
+    RECTANGLE Channelz {
+        + 连接状态监控
+        + RPC 调用统计
+        + 调试信息收集
+        --
+        note: 可观测性
+    }
+    
+    RECTANGLE xDS {
+        + xDS 客户端
+        + 动态配置管理
+        + 服务网格支持
+        --
+        note: xDS 协议支持
+    }
+}
+
+' 定义关系连接
+ClientApplication --> ClientConn : 使用
+ClientConn --> DialOptions : 配置
+ClientConn --> Balancer : 管理
+ClientConn --> Resolver : 使用
+
+ServerApplication --> Server : 注册服务
+Server --> ServerOptions : 配置
+Server --> ServerTransport : 管理
+
+Balancer --> Picker : 创建
+Balancer --> SubConn : 管理
+Picker --> SubConn : 选择
+SubConn --> ClientTransport : 使用
+
+Resolver --> Builder : 创建
+DNSResolver --|> Resolver
+ManualResolver --|> Resolver
+xDSResolver --|> Resolver
+
+HTTP2Client --|> ClientTransport
+HTTP2Server --|> ServerTransport
+ClientTransport --> Stream : 创建
+ServerTransport --> Stream : 处理
+
+ClientConn --> Interceptors : 应用
+Server --> Interceptors : 应用
+ClientTransport --> Credentials : 使用
+ServerTransport --> Credentials : 使用
+Stream --> Metadata : 传递
+Stream --> Status : 返回
+Stream --> Encoding : 使用
+
+Server --> Health : 集成
+Server --> Reflection : 集成
+ClientConn --> Channelz : 监控
+Server --> Channelz : 监控
+ClientConn --> xDS : 支持
+Server --> xDS : 支持
+
+note top of ClientApplication
+  用户应用程序通过 gRPC 客户端
+  发起 RPC 调用，享受透明的
+  负载均衡和服务发现能力
+end note
+
+note bottom of ServerApplication
+  用户服务实现通过 gRPC 服务端
+  提供 RPC 服务，支持高并发
+  和优雅关闭等企业级特性
+end note
+
+note right of HTTP2Client
+  基于 HTTP/2 协议实现
+  支持多路复用、流控制
+  头部压缩等高级特性
+end note
+
+note left of HTTP2Server
+  高性能的 HTTP/2 服务端
+  支持并发流处理和
+  连接管理优化
+end note
+
+@enduml

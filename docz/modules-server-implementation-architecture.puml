@@ -1,0 +1,170 @@
+@startuml 服务端实现架构图
+
+!define RECTANGLE class
+
+title gRPC-Go 服务端实现 (Server) 架构设计
+
+' 定义颜色主题
+!define SERVER_COLOR #E8F5E8
+!define TRANSPORT_COLOR #FFF3E0
+!define SERVICE_COLOR #F3E5F5
+!define INTERCEPTOR_COLOR #E3F2FD
+
+package "服务端核心 (Server Core)" SERVER_COLOR {
+    RECTANGLE Server {
+        - opts: serverOptions
+        - mu: sync.Mutex
+        - lis: map[net.Listener]bool
+        - conns: map[string]map[transport.ServerTransport]bool
+        - serve: bool
+        - drain: bool
+        - cv: *sync.Cond
+        - services: map[string]*serviceInfo
+        - quit: *grpcsync.Event
+        - done: *grpcsync.Event
+        --
+        + NewServer(opts): *Server
+        + RegisterService(desc, impl)
+        + Serve(lis): error
+        + Stop()
+        + GracefulStop()
+        --
+        note: 服务端核心管理器\n负责整个服务生命周期
+    }
+    
+    RECTANGLE ServerOptions {
+        + WithCreds(creds)
+        + WithUnaryInterceptor(interceptor)
+        + WithStreamInterceptor(interceptor)
+        + WithMaxMsgSize(size)
+        + WithKeepaliveParams(params)
+        --
+        note: 服务端配置选项
+    }
+}
+
+package "服务注册管理 (Service Registry)" SERVICE_COLOR {
+    RECTANGLE serviceInfo {
+        - serviceImpl: any
+        - methods: map[string]*MethodDesc
+        - streams: map[string]*StreamDesc
+        - mdata: any
+        --
+        note: 服务信息描述
+    }
+    
+    RECTANGLE MethodDesc {
+        - MethodName: string
+        - Handler: methodHandler
+        --
+        note: 一元方法描述符
+    }
+    
+    RECTANGLE StreamDesc {
+        - StreamName: string
+        - Handler: StreamHandler
+        - ServerStreams: bool
+        - ClientStreams: bool
+        --
+        note: 流方法描述符
+    }
+}
+
+package "传输层管理 (Transport Management)" TRANSPORT_COLOR {
+    interface "transport.ServerTransport" as ServerTransport {
+        + HandleStreams(ctx, handler)
+        + Close(err)
+        + Peer(): *peer.Peer
+        + Drain(debugData)
+        --
+        note: 服务端传输接口
+    }
+    
+    RECTANGLE http2Server {
+        - conn: net.Conn
+        - maxStreams: uint32
+        - authInfo: credentials.AuthInfo
+        - activeStreams: map[uint32]*Stream
+        --
+        + HandleStreams(ctx, handler)
+        + operateHeaders(frame)
+        + handleData(frame)
+        + writeHeader(stream, md): error
+        + write(stream, data): error
+        --
+        note: HTTP/2 服务端传输实现
+    }
+    
+    RECTANGLE ServerStream {
+        - ctx: context.Context
+        - t: ServerTransport
+        - codec: encoding.Codec
+        --
+        + SetHeader(md): error
+        + SendHeader(md): error
+        + SendMsg(m): error
+        + RecvMsg(m): error
+        --
+        note: 服务端流实现
+    }
+}
+
+package "拦截器系统 (Interceptor System)" INTERCEPTOR_COLOR {
+    interface "UnaryServerInterceptor" as UnaryInterceptor {
+        + (ctx, req, info, handler): (resp, error)
+        --
+        note: 一元服务端拦截器接口
+    }
+    
+    interface "StreamServerInterceptor" as StreamInterceptor {
+        + (srv, ss, info, handler): error
+        --
+        note: 流服务端拦截器接口
+    }
+    
+    RECTANGLE InterceptorChain {
+        - interceptors: []UnaryServerInterceptor
+        --
+        + buildChain(): UnaryServerInterceptor
+        + invoke(ctx, req, info, handler)
+        --
+        note: 拦截器链管理器
+    }
+}
+
+' 定义关系
+Server --> ServerOptions : 配置
+Server --> serviceInfo : 管理服务
+Server --> ServerTransport : 管理传输
+
+serviceInfo --> MethodDesc : 包含
+serviceInfo --> StreamDesc : 包含
+
+http2Server ..|> ServerTransport : 实现
+ServerStream --> ServerTransport : 使用
+
+Server --> UnaryInterceptor : 使用
+Server --> StreamInterceptor : 使用
+InterceptorChain --> UnaryInterceptor : 管理
+
+' 注释说明
+note top of Server
+  **服务启动流程：**
+  1. NewServer() 创建服务实例
+  2. RegisterService() 注册服务
+  3. Serve() 开始监听连接
+  4. Accept() 接受客户端连接
+  5. HandleStreams() 处理 RPC 流
+end note
+
+note bottom of http2Server
+  **请求处理流程：**
+  1. 接收 HTTP/2 帧
+  2. 解析请求头和数据
+  3. 路由到对应服务方法
+  4. 执行拦截器链
+  5. 调用业务处理器
+  6. 发送响应数据
+end note
+
+@enduml

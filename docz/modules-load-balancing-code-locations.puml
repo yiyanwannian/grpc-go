@@ -1,0 +1,380 @@
+@startuml 负载均衡机制代码位置图
+
+!define RECTANGLE class
+
+title gRPC-Go 负载均衡机制 (Load Balancing) 代码实现位置
+
+' 定义颜色主题
+!define BALANCER_COLOR #E8F5E8
+!define PICKER_COLOR #FFF3E0
+!define SUBCONN_COLOR #F3E5F5
+!define STRATEGY_COLOR #E3F2FD
+
+package "负载均衡核心接口 (Core Interfaces)" BALANCER_COLOR {
+    RECTANGLE Balancer {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 100-200 行
+        --
+        **接口定义**:
+        - type Balancer interface (行 ~100)
+        - UpdateClientConnState(ClientConnState) error
+        - ResolverError(error)
+        - UpdateSubConnState(SubConn, SubConnState)
+        - Close()
+        --
+        note: 文件: balancer/balancer.go\n负载均衡器核心接口
+    }
+    
+    RECTANGLE Builder {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 50-100 行
+        --
+        **接口定义**:
+        - type Builder interface (行 ~50)
+        - Build(cc ClientConn, opts BuildOptions) Balancer
+        - Name() string
+        --
+        note: 负载均衡器构建器接口
+    }
+    
+    RECTANGLE ClientConn {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 300-400 行
+        --
+        **接口定义**:
+        - type ClientConn interface (行 ~300)
+        - NewSubConn([]resolver.Address, NewSubConnOptions)
+        - RemoveSubConn(SubConn)
+        - UpdateState(State)
+        --
+        note: 客户端连接回调接口
+    }
+    
+    RECTANGLE ClientConnState {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 250-300 行
+        --
+        **结构体定义**:
+        - type ClientConnState struct (行 ~250)
+        - ResolverState resolver.State
+        - BalancerConfig serviceconfig.LoadBalancingConfig
+        --
+        note: 客户端连接状态结构
+    }
+}
+
+package "连接选择器 (Picker)" PICKER_COLOR {
+    RECTANGLE Picker {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 450-500 行
+        --
+        **接口定义**:
+        - type Picker interface (行 ~450)
+        - Pick(PickInfo) (PickResult, error)
+        --
+        note: 文件: balancer/balancer.go\n连接选择器接口
+    }
+    
+    RECTANGLE PickInfo {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 500-550 行
+        --
+        **结构体定义**:
+        - type PickInfo struct (行 ~500)
+        - FullMethodName string
+        - Ctx context.Context
+        --
+        note: 选择信息结构
+    }
+    
+    RECTANGLE PickResult {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 550-600 行
+        --
+        **结构体定义**:
+        - type PickResult struct (行 ~550)
+        - SubConn SubConn
+        - Done func(DoneInfo)
+        - Metadata metadata.MD
+        --
+        note: 选择结果结构
+    }
+    
+    RECTANGLE DoneInfo {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 600-650 行
+        --
+        **结构体定义**:
+        - type DoneInfo struct (行 ~600)
+        - Err error
+        - Trailer metadata.MD
+        - BytesSent int
+        - BytesReceived int
+        --
+        note: 完成信息结构
+    }
+}
+
+package "子连接管理 (SubConn Management)" SUBCONN_COLOR {
+    RECTANGLE SubConn {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 700-750 行
+        --
+        **接口定义**:
+        - type SubConn interface (行 ~700)
+        - UpdateAddresses([]resolver.Address)
+        - Connect()
+        - GetOrBuildProducer(ProducerBuilder)
+        --
+        note: 文件: balancer/balancer.go\n子连接接口
+    }
+    
+    RECTANGLE SubConnState {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 750-800 行
+        --
+        **结构体定义**:
+        - type SubConnState struct (行 ~750)
+        - ConnectivityState connectivity.State
+        - ConnectionError error
+        --
+        note: 子连接状态结构
+    }
+    
+    RECTANGLE ConnectivityState {
+        **文件位置**: connectivity/connectivity.go
+        **行数范围**: 约 30-80 行
+        --
+        **枚举定义**:
+        - type State int (行 ~30)
+        - Idle, Connecting, Ready
+        - TransientFailure, Shutdown
+        --
+        note: 文件: connectivity/connectivity.go\n连接状态枚举
+    }
+    
+    RECTANGLE NewSubConnOptions {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 800-850 行
+        --
+        **结构体定义**:
+        - type NewSubConnOptions struct (行 ~800)
+        - CredsBundle credentials.Bundle
+        - StateListener func(SubConnState)
+        - HealthCheckEnabled bool
+        --
+        note: 子连接创建选项
+    }
+}
+
+package "负载均衡策略 (Balancing Strategies)" STRATEGY_COLOR {
+    RECTANGLE pickfirstBalancer {
+        **文件位置**: balancer/pickfirst/pickfirst.go
+        **行数范围**: 约 50-200 行
+        --
+        **结构体定义**:
+        - type pickfirstBalancer struct (行 ~50)
+        - state connectivity.State
+        - cc balancer.ClientConn
+        - subConn balancer.SubConn
+        --
+        **主要方法**:
+        - UpdateClientConnState() (行 ~100)
+        - UpdateSubConnState() (行 ~150)
+        --
+        note: 文件: balancer/pickfirst/pickfirst.go\n首选策略实现
+    }
+    
+    RECTANGLE roundRobinBalancer {
+        **文件位置**: balancer/roundrobin/roundrobin.go
+        **行数范围**: 约 50-300 行
+        --
+        **结构体定义**:
+        - type rrBalancer struct (行 ~50)
+        - cc balancer.ClientConn
+        - subConns map[balancer.SubConn]*subConnInfo
+        - picker balancer.Picker
+        --
+        **主要方法**:
+        - UpdateClientConnState() (行 ~100)
+        - regeneratePicker() (行 ~200)
+        --
+        note: 文件: balancer/roundrobin/roundrobin.go\n轮询策略实现
+    }
+    
+    RECTANGLE weightedRoundRobinBalancer {
+        **文件位置**: balancer/weightedroundrobin/weightedroundrobin.go
+        **行数范围**: 约 100-500 行
+        --
+        **结构体定义**:
+        - type wrrBalancer struct (行 ~100)
+        - cc balancer.ClientConn
+        - subConns map[balancer.SubConn]*weightedSubConn
+        - picker *wrrPicker
+        --
+        **主要方法**:
+        - UpdateClientConnState() (行 ~200)
+        - updateWeights() (行 ~300)
+        --
+        note: 文件: balancer/weightedroundrobin/\nweightedroundrobin.go\n加权轮询策略实现
+    }
+    
+    RECTANGLE ringHashBalancer {
+        **文件位置**: balancer/ringhash/ringhash.go
+        **行数范围**: 约 100-600 行
+        --
+        **结构体定义**:
+        - type ringhashBalancer struct (行 ~100)
+        - cc balancer.ClientConn
+        - ring *ring
+        - subConns map[balancer.SubConn]*subConnInfo
+        --
+        **主要方法**:
+        - UpdateClientConnState() (行 ~200)
+        - buildRing() (行 ~400)
+        --
+        note: 文件: balancer/ringhash/ringhash.go\n一致性哈希策略实现
+    }
+}
+
+package "选择器实现 (Picker Implementations)" PICKER_COLOR {
+    RECTANGLE pickfirstPicker {
+        **文件位置**: balancer/pickfirst/pickfirst.go
+        **行数范围**: 约 250-300 行
+        --
+        **结构体定义**:
+        - type picker struct (行 ~250)
+        - result balancer.PickResult
+        --
+        **主要方法**:
+        - Pick() (行 ~280)
+        --
+        note: 首选选择器实现
+    }
+    
+    RECTANGLE rrPicker {
+        **文件位置**: balancer/roundrobin/roundrobin.go
+        **行数范围**: 约 350-450 行
+        --
+        **结构体定义**:
+        - type rrPicker struct (行 ~350)
+        - subConns []balancer.SubConn
+        - mu sync.Mutex
+        - next int
+        --
+        **主要方法**:
+        - Pick() (行 ~400)
+        --
+        note: 轮询选择器实现
+    }
+    
+    RECTANGLE wrrPicker {
+        **文件位置**: balancer/weightedroundrobin/weightedroundrobin.go
+        **行数范围**: 约 600-800 行
+        --
+        **结构体定义**:
+        - type wrrPicker struct (行 ~600)
+        - subConns []*weightedSubConn
+        - mu sync.Mutex
+        --
+        **主要方法**:
+        - Pick() (行 ~700)
+        - updateWeights() (行 ~750)
+        --
+        note: 加权选择器实现
+    }
+    
+    RECTANGLE ringHashPicker {
+        **文件位置**: balancer/ringhash/ringhash.go
+        **行数范围**: 约 700-900 行
+        --
+        **结构体定义**:
+        - type picker struct (行 ~700)
+        - ring *ring
+        --
+        **主要方法**:
+        - Pick() (行 ~800)
+        - hash() (行 ~850)
+        --
+        note: 哈希选择器实现
+    }
+}
+
+package "注册和管理 (Registry)" {
+    RECTANGLE BalancerRegistry {
+        **文件位置**: balancer/balancer.go
+        **行数范围**: 约 900-1000 行
+        --
+        **全局变量和函数**:
+        - var m = make(map[string]Builder) (行 ~900)
+        - func Register(b Builder) (行 ~920)
+        - func Get(name string) Builder (行 ~950)
+        --
+        note: 文件: balancer/balancer.go\n负载均衡器注册表
+    }
+    
+    RECTANGLE init函数 {
+        **文件位置**: 各策略包的 init() 函数
+        --
+        **pickfirst**: balancer/pickfirst/pickfirst.go (行 ~30)
+        **roundrobin**: balancer/roundrobin/roundrobin.go (行 ~30)
+        **weightedroundrobin**: balancer/weightedroundrobin/weightedroundrobin.go (行 ~50)
+        **ringhash**: balancer/ringhash/ringhash.go (行 ~50)
+        --
+        note: 各策略的自动注册
+    }
+}
+
+' 定义关系和文件依赖
+pickfirstBalancer --> Balancer : 实现 (跨文件)
+roundRobinBalancer --> Balancer : 实现 (跨文件)
+weightedRoundRobinBalancer --> Balancer : 实现 (跨文件)
+ringHashBalancer --> Balancer : 实现 (跨文件)
+
+pickfirstPicker --> Picker : 实现 (同文件)
+rrPicker --> Picker : 实现 (同文件)
+wrrPicker --> Picker : 实现 (同文件)
+ringHashPicker --> Picker : 实现 (同文件)
+
+BalancerRegistry --> Builder : 管理 (同文件)
+
+' 文件结构注释
+note top of Balancer
+  **balancer 包结构**:
+  balancer/
+  ├── balancer.go (核心接口和注册表)
+  ├── pickfirst/pickfirst.go
+  ├── roundrobin/roundrobin.go
+  ├── weightedroundrobin/weightedroundrobin.go
+  ├── ringhash/ringhash.go
+  └── base/balancer.go (基础实现)
+end note
+
+note bottom of pickfirstBalancer
+  **策略实现文件**:
+  每个策略都在独立的包中:
+  ├── 实现 Balancer 接口
+  ├── 实现对应的 Picker
+  ├── 在 init() 中自动注册
+  └── 提供策略特定的配置
+end note
+
+note right of SubConn
+  **SubConn 实际实现**:
+  SubConn 接口的实际实现在:
+  clientconn.go 中的 addrConn
+  (约 1700-2200 行)
+  
+  通过 ccBalancerWrapper 暴露
+  给负载均衡器使用
+end note
+
+note left of BalancerRegistry
+  **注册机制**:
+  1. 各策略在 init() 中调用 Register()
+  2. 全局 map 存储 name -> Builder
+  3. clientconn 通过 Get() 获取构建器
+  4. 支持运行时动态注册
+end note
+
+@enduml
